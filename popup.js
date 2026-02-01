@@ -5,8 +5,6 @@ const pauseBtn = document.getElementById("pause");
 const stopBtn = document.getElementById("stop");
 const speedSelect = document.getElementById("speed");
 
-let activeTabId = null;
-
 const STATUS_LABELS = {
   idle: "Ready",
   loading: "Preparing",
@@ -54,27 +52,73 @@ function getActiveTab() {
   });
 }
 
-function sendMessageToTab(message) {
-  return new Promise(async (resolve) => {
-    const tab = await getActiveTab();
-    if (!tab?.id) {
-      updateUI(null);
-      resolve(null);
-      return;
-    }
-    activeTabId = tab.id;
-    chrome.tabs.sendMessage(tab.id, message, (response) => {
+function sendMessageInternal(tabId, message) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
       if (chrome.runtime.lastError) {
-        updateUI(null);
-        resolve(null);
+        resolve({ error: chrome.runtime.lastError });
         return;
       }
-      if (response?.state) {
-        updateUI(response.state);
-      }
-      resolve(response);
+      resolve({ response });
     });
   });
+}
+
+function injectContentScript(tabId) {
+  return new Promise((resolve) => {
+    if (!chrome.scripting?.executeScript) {
+      resolve(false);
+      return;
+    }
+    chrome.scripting.executeScript(
+      {
+        target: { tabId },
+        files: [
+          "node_modules/pdfjs-dist/build/pdf.min.js",
+          "contentScript.js",
+        ],
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          resolve(false);
+          return;
+        }
+        resolve(true);
+      }
+    );
+  });
+}
+
+async function sendMessageToTab(message) {
+  const tab = await getActiveTab();
+  if (!tab?.id) {
+    updateUI(null);
+    return null;
+  }
+
+  const initial = await sendMessageInternal(tab.id, message);
+  if (!initial.error) {
+    if (initial.response?.state) {
+      updateUI(initial.response.state);
+    }
+    return initial.response;
+  }
+
+  const injected = await injectContentScript(tab.id);
+  if (!injected) {
+    updateUI(null);
+    return null;
+  }
+
+  const retry = await sendMessageInternal(tab.id, message);
+  if (retry.error) {
+    updateUI(null);
+    return null;
+  }
+  if (retry.response?.state) {
+    updateUI(retry.response.state);
+  }
+  return retry.response;
 }
 
 async function refreshState() {

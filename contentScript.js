@@ -46,6 +46,24 @@ function setStatus(status, message = "") {
   sendStateUpdate();
 }
 
+function resolvePdfUrl() {
+  if (document.contentType === "application/pdf") {
+    return window.location.href;
+  }
+  const embed = document.querySelector(
+    'embed[type="application/pdf"], object[type="application/pdf"]'
+  );
+  const source = embed?.src || embed?.data;
+  if (source) {
+    try {
+      return new URL(source, window.location.href).href;
+    } catch (error) {
+      return source;
+    }
+  }
+  return "";
+}
+
 function normalizeText(text) {
   return text.replace(/\s+/g, " ").trim();
 }
@@ -159,11 +177,16 @@ async function extractPdfText(url) {
 
 async function prepareText() {
   if (isPreparing) {
-    return;
+    return false;
   }
   isPreparing = true;
   try {
-    const { pages, totalPages } = await extractPdfText(window.location.href);
+    const pdfUrl = resolvePdfUrl();
+    if (!pdfUrl) {
+      setStatus("error", "Active tab does not appear to be a PDF.");
+      return false;
+    }
+    const { pages, totalPages } = await extractPdfText(pdfUrl);
     state.totalPages = totalPages;
     textChunks = buildChunks(pages);
     state.totalChunks = textChunks.length;
@@ -174,8 +197,7 @@ async function prepareText() {
         "error",
         "No selectable text found. This PDF might be scanned."
       );
-      isPreparing = false;
-      return;
+      return false;
     }
 
     const sample = textChunks.slice(0, 3).join(" ").slice(0, 1000);
@@ -183,10 +205,12 @@ async function prepareText() {
     state.language = detectedLanguage;
     selectedVoice = pickVoiceForLanguage(detectedLanguage);
     setStatus("idle", "");
+    return true;
   } catch (error) {
     const message =
       "Unable to access PDF text. For local files, enable file access in the extension settings.";
     setStatus("error", message);
+    return false;
   } finally {
     isPreparing = false;
   }
@@ -268,8 +292,8 @@ async function startReading() {
 
   if (!textChunks.length) {
     setStatus("loading", "Loading PDF text...");
-    await prepareText();
-    if (!textChunks.length) {
+    const ready = await prepareText();
+    if (!ready || !textChunks.length) {
       return;
     }
   }

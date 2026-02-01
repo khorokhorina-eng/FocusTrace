@@ -5,9 +5,15 @@
   "manifest_version": 3,
   "action": {
     "default_title": "PDF Text to Speech",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.svg",
+      "32": "icons/icon-32.svg",
+      "48": "icons/icon-48.svg",
+      "128": "icons/icon-128.svg"
+    }
   },
-  "permissions": ["activeTab"],
+  "permissions": ["activeTab", "scripting"],
   "host_permissions": [
     "*://*/*.pdf",
     "*://*/*.PDF",
@@ -29,6 +35,12 @@
       "run_at": "document_idle"
     }
   ],
+  "icons": {
+    "16": "icons/icon-16.svg",
+    "32": "icons/icon-32.svg",
+    "48": "icons/icon-48.svg",
+    "128": "icons/icon-128.svg"
+  },
   "web_accessible_resources": [
     {
       "resources": ["node_modules/pdfjs-dist/build/pdf.worker.min.js"],
