@@ -1,0 +1,38 @@
+{
+  "name": "PDF Text to Speech",
+  "description": "Read PDF documents aloud directly in the browser.",
+  "version": "1.0.0",
+  "manifest_version": 3,
+  "action": {
+    "default_title": "PDF Text to Speech",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["activeTab"],
+  "host_permissions": [
+    "*://*/*.pdf",
+    "*://*/*.PDF",
+    "file:///*.pdf",
+    "file:///*.PDF"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*/*.pdf",
+        "*://*/*.PDF",
+        "file:///*.pdf",
+        "file:///*.PDF"
+      ],
+      "js": [
+        "node_modules/pdfjs-dist/build/pdf.min.js",
+        "contentScript.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["node_modules/pdfjs-dist/build/pdf.worker.min.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

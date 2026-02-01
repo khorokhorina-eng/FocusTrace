@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PDF Text to Speech</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>PDF Text to Speech</h1>
+      <p id="status" class="status">Ready</p>
+      <div class="controls">
+        <button id="play" class="primary">Read Aloud</button>
+        <button id="pause" class="secondary">Pause</button>
+        <button id="stop" class="secondary">Stop</button>
+      </div>
+      <label class="speed">
+        Speed
+        <select id="speed">
+          <option value="0.75">0.75x</option>
+          <option value="1" selected>1x</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x</option>
+        </select>
+      </label>
+      <p id="hint" class="hint">Open a PDF in Chrome to start.</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
