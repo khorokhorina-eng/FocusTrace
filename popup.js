@@ -73,10 +73,7 @@ function injectContentScript(tabId) {
     chrome.scripting.executeScript(
       {
         target: { tabId },
-        files: [
-          "node_modules/pdfjs-dist/legacy/build/pdf.min.js",
-          "contentScript.js",
-        ],
+        files: ["contentScript.js"],
       },
       () => {
         if (chrome.runtime.lastError) {

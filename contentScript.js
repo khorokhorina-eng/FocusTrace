@@ -8,7 +8,6 @@ const state = {
   language: "",
 };
 
-const pdfjs = window.pdfjsLib;
 let textChunks = [];
 let currentChunkIndex = 0;
 let isPreparing = false;
@@ -17,11 +16,33 @@ let restartOnResume = false;
 let detectedLanguage = "";
 let selectedVoice = null;
 let availableVoices = [];
+let pdfjsModule = null;
+let pdfjsLoading = null;
 
-if (pdfjs?.GlobalWorkerOptions) {
-  pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
-    "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.js"
-  );
+async function loadPdfjs() {
+  if (pdfjsModule) {
+    return pdfjsModule;
+  }
+  if (!pdfjsLoading) {
+    const moduleUrl = chrome.runtime.getURL(
+      "node_modules/pdfjs-dist/legacy/build/pdf.min.mjs"
+    );
+    pdfjsLoading = import(moduleUrl)
+      .then((module) => {
+        pdfjsModule = module?.default || module;
+        if (pdfjsModule?.GlobalWorkerOptions) {
+          pdfjsModule.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
+            "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"
+          );
+        }
+        return pdfjsModule;
+      })
+      .catch((error) => {
+        pdfjsLoading = null;
+        throw error;
+      });
+  }
+  return pdfjsLoading;
 }
 
 function refreshVoices() {
@@ -155,7 +176,8 @@ function pickVoiceForLanguage(language) {
 }
 
 async function extractPdfText(url) {
-  if (!pdfjs) {
+  const pdfjs = await loadPdfjs();
+  if (!pdfjs?.getDocument) {
     throw new Error("PDF engine not available.");
   }
   const loadingTask = pdfjs.getDocument({ url, withCredentials: true });
