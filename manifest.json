@@ -29,7 +29,7 @@
         "file:///*.PDF"
       ],
       "js": [
-        "node_modules/pdfjs-dist/build/pdf.min.js",
+        "node_modules/pdfjs-dist/legacy/build/pdf.min.js",
         "contentScript.js"
       ],
       "run_at": "document_idle"
@@ -43,7 +43,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["node_modules/pdfjs-dist/build/pdf.worker.min.js"],
+      "resources": ["node_modules/pdfjs-dist/legacy/build/pdf.worker.min.js"],
       "matches": ["<all_urls>"]
     }
   ]

@@ -20,7 +20,7 @@ let availableVoices = [];
 
 if (pdfjs?.GlobalWorkerOptions) {
   pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
-    "node_modules/pdfjs-dist/build/pdf.worker.min.js"
+    "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.js"
   );
 }
 

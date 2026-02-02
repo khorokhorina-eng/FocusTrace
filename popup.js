@@ -74,7 +74,7 @@ function injectContentScript(tabId) {
       {
         target: { tabId },
         files: [
-          "node_modules/pdfjs-dist/build/pdf.min.js",
+          "node_modules/pdfjs-dist/legacy/build/pdf.min.js",
           "contentScript.js",
         ],
       },
