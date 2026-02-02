@@ -4,6 +4,8 @@ const playBtn = document.getElementById("play");
 const pauseBtn = document.getElementById("pause");
 const stopBtn = document.getElementById("stop");
 const speedSelect = document.getElementById("speed");
+const openFileBtn = document.getElementById("openFile");
+const fileInput = document.getElementById("fileInput");
 
 const STATUS_LABELS = {
   idle: "Ready",
@@ -14,18 +16,42 @@ const STATUS_LABELS = {
   error: "Unable to read",
 };
 
-function setControlsEnabled(enabled) {
-  playBtn.disabled = !enabled;
-  pauseBtn.disabled = !enabled;
-  stopBtn.disabled = !enabled;
-  speedSelect.disabled = !enabled;
+const localState = {
+  status: "idle",
+  speed: 1,
+  message: "Select a PDF file to start.",
+  language: "",
+};
+
+let mode = "tab";
+let localChunks = [];
+let localChunkIndex = 0;
+let localLanguage = "";
+let localVoice = null;
+let localVoices = [];
+let localRestartOnResume = false;
+let localSkipNextEnd = false;
+let pdfjsModule = null;
+let pdfjsLoading = null;
+
+function setMode(nextMode) {
+  mode = nextMode;
+  if (mode === "local") {
+    openFileBtn.classList.remove("hidden");
+  } else {
+    openFileBtn.classList.add("hidden");
+  }
 }
 
-function updateUI(state) {
+function updateUI(state, nextMode = mode) {
   if (!state) {
     statusEl.textContent = "Open a PDF to start";
     hintEl.textContent = "Make sure the active tab is a PDF.";
-    setControlsEnabled(false);
+    playBtn.disabled = true;
+    pauseBtn.disabled = true;
+    stopBtn.disabled = true;
+    speedSelect.disabled = true;
+    openFileBtn.classList.add("hidden");
     return;
   }
 
@@ -38,10 +64,21 @@ function updateUI(state) {
   }
 
   pauseBtn.textContent = state.status === "paused" ? "Resume" : "Pause";
-  playBtn.disabled = state.status === "reading" || state.status === "loading";
+  if (nextMode === "local") {
+    playBtn.disabled = state.status === "loading";
+  } else {
+    playBtn.disabled = state.status === "reading" || state.status === "loading";
+  }
   pauseBtn.disabled = !(state.status === "reading" || state.status === "paused");
   stopBtn.disabled = !(state.status === "reading" || state.status === "paused");
   speedSelect.disabled = state.status === "loading";
+}
+
+function setLocalStatus(status, message = "") {
+  localState.status = status;
+  localState.message = message || localState.message;
+  setMode("local");
+  updateUI(localState, "local");
 }
 
 function getActiveTab() {
@@ -113,40 +150,413 @@ async function sendMessageToTab(message) {
     return null;
   }
   if (retry.response?.state) {
-    updateUI(retry.response.state);
+    setMode("tab");
+    updateUI(retry.response.state, "tab");
   }
   return retry.response;
 }
 
 async function refreshState() {
-  await sendMessageToTab({ type: "getState" });
+  const tab = await getActiveTab();
+  if (!tab?.id) {
+    setLocalStatus("idle", "Select a PDF file to start.");
+    return;
+  }
+  const response = await sendMessageToTab({ type: "getState" });
+  if (response?.state) {
+    setMode("tab");
+    updateUI(response.state, "tab");
+    return;
+  }
+  if (tab.url?.startsWith("file://")) {
+    setLocalStatus(
+      "idle",
+      "Local file detected. Enable file access or open the PDF here."
+    );
+    return;
+  }
+  setLocalStatus("idle", "Select a PDF file to start.");
 }
 
-playBtn.addEventListener("click", () => {
-  sendMessageToTab({ type: "start" });
+function normalizeText(text) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function splitIntoSentences(text) {
+  const matches = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g);
+  if (!matches) {
+    return [];
+  }
+  return matches.map((sentence) => sentence.trim()).filter(Boolean);
+}
+
+function buildChunks(pages) {
+  const chunks = [];
+  const maxLength = 1200;
+
+  pages.forEach((pageText) => {
+    const normalized = normalizeText(pageText);
+    if (!normalized) {
+      return;
+    }
+    const sentences = splitIntoSentences(normalized);
+    const parts = sentences.length ? sentences : [normalized];
+    let current = "";
+
+    parts.forEach((sentence) => {
+      const candidate = current ? `${current} ${sentence}` : sentence;
+      if (candidate.length > maxLength) {
+        if (current) {
+          chunks.push(current.trim());
+          current = sentence;
+        } else {
+          chunks.push(sentence.trim());
+          current = "";
+        }
+      } else {
+        current = candidate;
+      }
+    });
+
+    if (current) {
+      chunks.push(current.trim());
+    }
+  });
+
+  return chunks;
+}
+
+async function detectLanguageFromText(text) {
+  return new Promise((resolve) => {
+    if (!chrome?.i18n?.detectLanguage) {
+      resolve("");
+      return;
+    }
+    chrome.i18n.detectLanguage(text, (result) => {
+      if (chrome.runtime.lastError || !result?.languages?.length) {
+        resolve("");
+        return;
+      }
+      const best = result.languages
+        .slice()
+        .sort((a, b) => b.percentage - a.percentage)[0];
+      resolve(best?.language || "");
+    });
+  });
+}
+
+function pickVoiceForLanguage(language) {
+  if (!localVoices.length) {
+    return null;
+  }
+  if (!language) {
+    return localVoices.find((voice) => voice.default) || localVoices[0];
+  }
+  const lower = language.toLowerCase();
+  const exact = localVoices.find(
+    (voice) => voice.lang && voice.lang.toLowerCase() === lower
+  );
+  if (exact) {
+    return exact;
+  }
+  const base = lower.split("-")[0];
+  const partial = localVoices.find(
+    (voice) => voice.lang && voice.lang.toLowerCase().startsWith(base)
+  );
+  return partial || localVoices.find((voice) => voice.default) || null;
+}
+
+function refreshVoices() {
+  localVoices = speechSynthesis.getVoices() || [];
+  if (!localVoice && localLanguage) {
+    localVoice = pickVoiceForLanguage(localLanguage);
+  }
+}
+
+if (speechSynthesis.onvoiceschanged !== undefined) {
+  speechSynthesis.onvoiceschanged = refreshVoices;
+}
+refreshVoices();
+
+async function loadPdfjs() {
+  if (pdfjsModule) {
+    return pdfjsModule;
+  }
+  if (!pdfjsLoading) {
+    const moduleUrl = chrome.runtime.getURL(
+      "node_modules/pdfjs-dist/legacy/build/pdf.min.mjs"
+    );
+    pdfjsLoading = import(moduleUrl)
+      .then((module) => {
+        pdfjsModule = module?.default || module;
+        if (pdfjsModule?.GlobalWorkerOptions) {
+          pdfjsModule.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
+            "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"
+          );
+        }
+        return pdfjsModule;
+      })
+      .catch((error) => {
+        pdfjsLoading = null;
+        throw error;
+      });
+  }
+  return pdfjsLoading;
+}
+
+async function extractPdfTextFromBuffer(buffer) {
+  const pdfjs = await loadPdfjs();
+  if (!pdfjs?.getDocument) {
+    throw new Error("PDF engine not available.");
+  }
+  const loadingTask = pdfjs.getDocument({ data: buffer });
+  const pdf = await loadingTask.promise;
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items
+      .map((item) => item.str)
+      .filter(Boolean)
+      .join(" ");
+    pages.push(pageText);
+  }
+
+  return { pages, totalPages: pdf.numPages };
+}
+
+function createLocalUtterance(text) {
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = localState.speed;
+  if (localLanguage) {
+    utterance.lang = localLanguage;
+  }
+  if (localVoice) {
+    utterance.voice = localVoice;
+  }
+  utterance.onend = handleLocalUtteranceEnd;
+  utterance.onerror = handleLocalUtteranceError;
+  return utterance;
+}
+
+function handleLocalUtteranceEnd() {
+  if (localSkipNextEnd) {
+    localSkipNextEnd = false;
+    return;
+  }
+  if (localState.status !== "reading") {
+    return;
+  }
+  localChunkIndex += 1;
+  if (localChunkIndex >= localChunks.length) {
+    setLocalStatus("finished", "Finished reading this file.");
+    return;
+  }
+  speakLocalChunk();
+}
+
+function handleLocalUtteranceError() {
+  setLocalStatus("error", "Speech stopped unexpectedly.");
+}
+
+function cancelLocalSpeech() {
+  if (speechSynthesis.speaking || speechSynthesis.pending) {
+    localSkipNextEnd = true;
+  } else {
+    localSkipNextEnd = false;
+  }
+  speechSynthesis.cancel();
+}
+
+function speakLocalChunk() {
+  if (!localChunks.length) {
+    setLocalStatus("error", "No text available to read.");
+    return;
+  }
+  if (localChunkIndex >= localChunks.length) {
+    setLocalStatus("finished", "Finished reading this file.");
+    return;
+  }
+  const chunk = localChunks[localChunkIndex];
+  if (!chunk) {
+    localChunkIndex += 1;
+    speakLocalChunk();
+    return;
+  }
+  updateUI(localState, "local");
+  const utterance = createLocalUtterance(chunk);
+  speechSynthesis.speak(utterance);
+}
+
+async function loadLocalFile(file) {
+  if (!file) {
+    return;
+  }
+  cancelLocalSpeech();
+  localChunks = [];
+  localChunkIndex = 0;
+  localLanguage = "";
+  localVoice = null;
+  localRestartOnResume = false;
+  localState.message = `Selected file: ${file.name}`;
+  setLocalStatus("loading", "Loading PDF text...");
+  try {
+    const buffer = await file.arrayBuffer();
+    const { pages } = await extractPdfTextFromBuffer(buffer);
+    localChunks = buildChunks(pages);
+    if (!localChunks.length) {
+      setLocalStatus(
+        "error",
+        "No selectable text found. This PDF might be scanned."
+      );
+      return;
+    }
+    const sample = localChunks.slice(0, 3).join(" ").slice(0, 1000);
+    localLanguage = await detectLanguageFromText(sample);
+    localState.language = localLanguage;
+    localVoice = pickVoiceForLanguage(localLanguage);
+    localState.message = `Selected file: ${file.name}`;
+    setLocalStatus("idle", localState.message);
+  } catch (error) {
+    setLocalStatus("error", "Unable to read the selected file.");
+  }
+}
+
+function startLocalReading() {
+  if (localState.status === "reading") {
+    return;
+  }
+  if (localState.status === "paused") {
+    resumeLocalReading();
+    return;
+  }
+  if (!localChunks.length) {
+    localState.message = "Select a PDF file to start.";
+    updateUI(localState, "local");
+    fileInput.click();
+    return;
+  }
+  if (localState.status === "finished" || localState.status === "idle") {
+    localChunkIndex = 0;
+  }
+  cancelLocalSpeech();
+  setLocalStatus("reading", "");
+  speakLocalChunk();
+}
+
+function pauseLocalReading() {
+  if (localState.status !== "reading") {
+    return;
+  }
+  speechSynthesis.pause();
+  setLocalStatus("paused", "");
+}
+
+function resumeLocalReading() {
+  if (localState.status !== "paused") {
+    return;
+  }
+  setLocalStatus("reading", "");
+  if (localRestartOnResume) {
+    localRestartOnResume = false;
+    cancelLocalSpeech();
+    speakLocalChunk();
+    return;
+  }
+  speechSynthesis.resume();
+}
+
+function stopLocalReading() {
+  cancelLocalSpeech();
+  localChunkIndex = 0;
+  setLocalStatus("idle", localState.message);
+}
+
+function setLocalSpeed(speed) {
+  if (!Number.isFinite(speed)) {
+    return;
+  }
+  localState.speed = speed;
+  if (localState.status === "reading") {
+    cancelLocalSpeech();
+    speakLocalChunk();
+    return;
+  }
+  if (localState.status === "paused") {
+    localRestartOnResume = true;
+  }
+  updateUI(localState, "local");
+}
+
+async function handleTabAction(message) {
+  const response = await sendMessageToTab(message);
+  if (response?.state) {
+    setMode("tab");
+    updateUI(response.state, "tab");
+    return true;
+  }
+  return false;
+}
+
+playBtn.addEventListener("click", async () => {
+  if (mode === "local") {
+    startLocalReading();
+    return;
+  }
+  const ok = await handleTabAction({ type: "start" });
+  if (!ok) {
+    setLocalStatus("idle", "Select a PDF file to start.");
+    startLocalReading();
+  }
 });
 
 pauseBtn.addEventListener("click", () => {
   if (pauseBtn.textContent === "Resume") {
-    sendMessageToTab({ type: "resume" });
+    if (mode === "local") {
+      resumeLocalReading();
+    } else {
+      sendMessageToTab({ type: "resume" });
+    }
   } else {
-    sendMessageToTab({ type: "pause" });
+    if (mode === "local") {
+      pauseLocalReading();
+    } else {
+      sendMessageToTab({ type: "pause" });
+    }
   }
 });
 
 stopBtn.addEventListener("click", () => {
-  sendMessageToTab({ type: "stop" });
+  if (mode === "local") {
+    stopLocalReading();
+  } else {
+    sendMessageToTab({ type: "stop" });
+  }
 });
 
 speedSelect.addEventListener("change", (event) => {
   const speed = Number.parseFloat(event.target.value);
-  sendMessageToTab({ type: "setSpeed", speed });
+  if (mode === "local") {
+    setLocalSpeed(speed);
+  } else {
+    sendMessageToTab({ type: "setSpeed", speed });
+  }
 });
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type === "stateUpdate") {
-    updateUI(message.state);
+  if (message?.type === "stateUpdate" && mode === "tab") {
+    updateUI(message.state, "tab");
   }
+});
+
+openFileBtn.addEventListener("click", () => {
+  fileInput.click();
+});
+
+fileInput.addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  loadLocalFile(file);
 });
 
 document.addEventListener("DOMContentLoaded", () => {

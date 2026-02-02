@@ -58,6 +58,10 @@ button:disabled {
   color: #1e293b;
 }
 
+.hidden {
+  display: none;
+}
+
 .speed {
   display: flex;
   justify-content: space-between;
