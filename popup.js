@@ -6,6 +6,12 @@ const stopBtn = document.getElementById("stop");
 const speedSelect = document.getElementById("speed");
 const openFileBtn = document.getElementById("openFile");
 const fileInput = document.getElementById("fileInput");
+const aiToggle = document.getElementById("aiToggle");
+const aiHint = document.getElementById("aiHint");
+
+const AI_CONFIG = window.PDF_TTS_CONFIG || {};
+const AI_TTS_ENDPOINT = AI_CONFIG.aiEndpoint || "";
+const AI_DEFAULT_VOICE = AI_CONFIG.aiDefaultVoice || "alloy";
 
 const STATUS_LABELS = {
   idle: "Ready",
@@ -35,6 +41,13 @@ let pdfjsModule = null;
 let pdfjsLoading = null;
 let lastKnownState = null;
 let lastKnownMode = null;
+let aiEnabled = Boolean(AI_CONFIG.aiEnabledByDefault && AI_TTS_ENDPOINT);
+let localAiAudio = null;
+let localAiAbortController = null;
+let localAiCurrentUrl = null;
+let localAiPlaybackToken = 0;
+let localAiRestartOnResume = false;
+let localAiSkipNextEnd = false;
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -43,6 +56,20 @@ function setMode(nextMode) {
   } else {
     openFileBtn.classList.add("hidden");
   }
+}
+
+function setAiHint(text) {
+  if (!text) {
+    aiHint.textContent = "";
+    aiHint.classList.add("hidden");
+    return;
+  }
+  aiHint.textContent = text;
+  aiHint.classList.remove("hidden");
+}
+
+function isAiAvailable() {
+  return Boolean(AI_TTS_ENDPOINT);
 }
 
 function updateUI(state, nextMode = mode) {
@@ -114,7 +141,7 @@ function injectContentScript(tabId) {
     chrome.scripting.executeScript(
       {
         target: { tabId },
-        files: ["contentScript.js"],
+        files: ["config.js", "contentScript.js"],
       },
       () => {
         if (chrome.runtime.lastError) {
@@ -179,6 +206,19 @@ async function refreshState() {
   if (response?.state) {
     setMode("tab");
     updateUI(response.state, "tab");
+    if (typeof response.state.ttsMode === "string") {
+      aiEnabled = response.state.ttsMode === "ai";
+      aiToggle.checked = aiEnabled;
+    }
+    if (response.state.aiAvailable === false) {
+      aiToggle.disabled = true;
+      setAiHint("AI voice requires server setup.");
+    } else {
+      aiToggle.disabled = !isAiAvailable();
+      if (!isAiAvailable()) {
+        setAiHint("AI voice requires server setup.");
+      }
+    }
     return;
   }
   if (tab.url?.startsWith("file://")) {
@@ -339,6 +379,29 @@ async function extractPdfTextFromBuffer(buffer) {
   return { pages, totalPages: pdf.numPages };
 }
 
+async function fetchAiAudio(text, language, speed) {
+  if (!AI_TTS_ENDPOINT) {
+    throw new Error("AI voice is not configured.");
+  }
+  const controller = new AbortController();
+  localAiAbortController = controller;
+  const response = await fetch(AI_TTS_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      language,
+      speed,
+      voice: AI_DEFAULT_VOICE,
+    }),
+    signal: controller.signal,
+  });
+  if (!response.ok) {
+    throw new Error("AI voice request failed.");
+  }
+  return response.blob();
+}
+
 function createLocalUtterance(text) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = localState.speed;
@@ -373,6 +436,23 @@ function handleLocalUtteranceError() {
   setLocalStatus("error", "Speech stopped unexpectedly.");
 }
 
+function stopLocalAiPlayback() {
+  localAiPlaybackToken += 1;
+  if (localAiAbortController) {
+    localAiAbortController.abort();
+    localAiAbortController = null;
+  }
+  if (localAiAudio) {
+    localAiSkipNextEnd = true;
+    localAiAudio.pause();
+    localAiAudio = null;
+  }
+  if (localAiCurrentUrl) {
+    URL.revokeObjectURL(localAiCurrentUrl);
+    localAiCurrentUrl = null;
+  }
+}
+
 function cancelLocalSpeech() {
   if (speechSynthesis.speaking || speechSynthesis.pending) {
     localSkipNextEnd = true;
@@ -380,6 +460,56 @@ function cancelLocalSpeech() {
     localSkipNextEnd = false;
   }
   speechSynthesis.cancel();
+}
+
+async function playLocalAiChunk() {
+  if (!localChunks.length) {
+    setLocalStatus("error", "No text available to read.");
+    return;
+  }
+  if (localChunkIndex >= localChunks.length) {
+    setLocalStatus("finished", "Finished reading this file.");
+    return;
+  }
+  const chunk = localChunks[localChunkIndex];
+  if (!chunk) {
+    localChunkIndex += 1;
+    playLocalAiChunk();
+    return;
+  }
+  const token = localAiPlaybackToken;
+  updateUI(localState, "local");
+  try {
+    const blob = await fetchAiAudio(chunk, localLanguage, localState.speed);
+    if (token !== localAiPlaybackToken || localState.status !== "reading") {
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    localAiCurrentUrl = url;
+    const audio = new Audio(url);
+    localAiAudio = audio;
+    audio.onended = () => {
+      if (localAiSkipNextEnd) {
+        localAiSkipNextEnd = false;
+        return;
+      }
+      URL.revokeObjectURL(url);
+      localAiCurrentUrl = null;
+      if (localState.status !== "reading") {
+        return;
+      }
+      localChunkIndex += 1;
+      playLocalAiChunk();
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      localAiCurrentUrl = null;
+      setLocalStatus("error", "AI voice failed.");
+    };
+    await audio.play();
+  } catch (error) {
+    setLocalStatus("error", "AI voice failed.");
+  }
 }
 
 function speakLocalChunk() {
@@ -407,6 +537,7 @@ async function loadLocalFile(file) {
     return;
   }
   cancelLocalSpeech();
+  stopLocalAiPlayback();
   localChunks = [];
   localChunkIndex = 0;
   localLanguage = "";
@@ -436,7 +567,72 @@ async function loadLocalFile(file) {
   }
 }
 
+function startLocalAiReading() {
+  if (!isAiAvailable()) {
+    setLocalStatus("error", "AI voice is not configured.");
+    return;
+  }
+  if (localState.status === "reading") {
+    return;
+  }
+  if (localState.status === "paused") {
+    resumeLocalAiReading();
+    return;
+  }
+  if (!localChunks.length) {
+    localState.message = "Select a PDF file to start.";
+    updateUI(localState, "local");
+    fileInput.click();
+    return;
+  }
+  if (localState.status === "finished" || localState.status === "idle") {
+    localChunkIndex = 0;
+  }
+  cancelLocalSpeech();
+  stopLocalAiPlayback();
+  setLocalStatus("reading", "");
+  playLocalAiChunk();
+}
+
+function pauseLocalAiReading() {
+  if (localState.status !== "reading") {
+    return;
+  }
+  if (localAiAudio) {
+    localAiAudio.pause();
+  }
+  setLocalStatus("paused", "");
+}
+
+function resumeLocalAiReading() {
+  if (localState.status !== "paused") {
+    return;
+  }
+  setLocalStatus("reading", "");
+  if (localAiRestartOnResume) {
+    localAiRestartOnResume = false;
+    stopLocalAiPlayback();
+    playLocalAiChunk();
+    return;
+  }
+  if (localAiAudio) {
+    localAiAudio.play();
+  } else {
+    playLocalAiChunk();
+  }
+}
+
+function stopLocalAiReading() {
+  stopLocalAiPlayback();
+  localChunkIndex = 0;
+  setLocalStatus("idle", localState.message);
+}
+
 function startLocalReading() {
+  if (aiEnabled) {
+    startLocalAiReading();
+    return;
+  }
   if (localState.status === "reading") {
     return;
   }
@@ -459,6 +655,10 @@ function startLocalReading() {
 }
 
 function pauseLocalReading() {
+  if (aiEnabled) {
+    pauseLocalAiReading();
+    return;
+  }
   if (localState.status !== "reading") {
     return;
   }
@@ -467,6 +667,10 @@ function pauseLocalReading() {
 }
 
 function resumeLocalReading() {
+  if (aiEnabled) {
+    resumeLocalAiReading();
+    return;
+  }
   if (localState.status !== "paused") {
     return;
   }
@@ -481,6 +685,10 @@ function resumeLocalReading() {
 }
 
 function stopLocalReading() {
+  if (aiEnabled) {
+    stopLocalAiReading();
+    return;
+  }
   cancelLocalSpeech();
   localChunkIndex = 0;
   setLocalStatus("idle", localState.message);
@@ -491,9 +699,15 @@ function setLocalSpeed(speed) {
     return;
   }
   localState.speed = speed;
+  if (aiEnabled) {
+    if (localState.status === "paused") {
+      localAiRestartOnResume = true;
+    }
+    updateUI(localState, "local");
+    return;
+  }
   if (localState.status === "reading") {
-    cancelLocalSpeech();
-    speakLocalChunk();
+    updateUI(localState, "local");
     return;
   }
   if (localState.status === "paused") {
@@ -557,8 +771,39 @@ speedSelect.addEventListener("change", (event) => {
   }
 });
 
+aiToggle.addEventListener("change", async (event) => {
+  const nextEnabled = event.target.checked;
+  if (!isAiAvailable()) {
+    aiEnabled = false;
+    aiToggle.checked = false;
+    setAiHint("AI voice requires server setup.");
+    return;
+  }
+  aiEnabled = nextEnabled;
+  setAiHint("");
+  if (mode === "tab") {
+    const response = await sendMessageToTab({
+      type: "setTtsMode",
+      mode: aiEnabled ? "ai" : "system",
+    });
+    if (response?.state) {
+      setMode("tab");
+      updateUI(response.state, "tab");
+    }
+    return;
+  }
+  cancelLocalSpeech();
+  stopLocalAiPlayback();
+  localChunkIndex = 0;
+  setLocalStatus("idle", localState.message);
+});
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "stateUpdate" && mode === "tab") {
+    if (typeof message.state.ttsMode === "string") {
+      aiEnabled = message.state.ttsMode === "ai";
+      aiToggle.checked = aiEnabled;
+    }
     updateUI(message.state, "tab");
   }
 });
@@ -574,5 +819,10 @@ fileInput.addEventListener("change", (event) => {
 
 document.addEventListener("DOMContentLoaded", () => {
   updateUI(null);
+  aiToggle.checked = aiEnabled;
+  aiToggle.disabled = !isAiAvailable();
+  if (!isAiAvailable()) {
+    setAiHint("AI voice requires server setup.");
+  }
   refreshState();
 });

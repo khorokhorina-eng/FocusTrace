@@ -18,7 +18,8 @@
     "*://*/*.pdf",
     "*://*/*.PDF",
     "file:///*.pdf",
-    "file:///*.PDF"
+    "file:///*.PDF",
+    "https://your-tts-proxy.example.com/*"
   ],
   "content_scripts": [
     {
@@ -28,7 +29,7 @@
         "file:///*.pdf",
         "file:///*.PDF"
       ],
-      "js": ["contentScript.js"],
+      "js": ["config.js", "contentScript.js"],
       "run_at": "document_idle"
     }
   ],

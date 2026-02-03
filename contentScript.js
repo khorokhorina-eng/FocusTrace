@@ -6,7 +6,17 @@ const state = {
   totalChunks: 0,
   currentChunk: 0,
   language: "",
+  ttsMode: "system",
+  aiAvailable: false,
 };
+
+const AI_CONFIG = window.PDF_TTS_CONFIG || {};
+const AI_TTS_ENDPOINT = AI_CONFIG.aiEndpoint || "";
+const AI_DEFAULT_VOICE = AI_CONFIG.aiDefaultVoice || "alloy";
+state.aiAvailable = Boolean(AI_TTS_ENDPOINT);
+if (AI_CONFIG.aiEnabledByDefault && state.aiAvailable) {
+  state.ttsMode = "ai";
+}
 
 let textChunks = [];
 let currentChunkIndex = 0;
@@ -18,6 +28,12 @@ let selectedVoice = null;
 let availableVoices = [];
 let pdfjsModule = null;
 let pdfjsLoading = null;
+let aiAudio = null;
+let aiAbortController = null;
+let aiCurrentUrl = null;
+let aiPlaybackToken = 0;
+let aiRestartOnResume = false;
+let aiSkipNextEnd = false;
 
 async function loadPdfjs() {
   if (pdfjsModule) {
@@ -43,6 +59,37 @@ async function loadPdfjs() {
       });
   }
   return pdfjsLoading;
+}
+
+function isAiMode() {
+  return state.ttsMode === "ai";
+}
+
+function isAiAvailable() {
+  return Boolean(AI_TTS_ENDPOINT);
+}
+
+async function fetchAiAudio(text, language, speed) {
+  if (!isAiAvailable()) {
+    throw new Error("AI voice is not configured.");
+  }
+  const controller = new AbortController();
+  aiAbortController = controller;
+  const response = await fetch(AI_TTS_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      language,
+      speed,
+      voice: AI_DEFAULT_VOICE,
+    }),
+    signal: controller.signal,
+  });
+  if (!response.ok) {
+    throw new Error("AI voice request failed.");
+  }
+  return response.blob();
 }
 
 function refreshVoices() {
@@ -303,7 +350,143 @@ function cancelSpeech() {
   speechSynthesis.cancel();
 }
 
+function stopAiPlayback() {
+  aiPlaybackToken += 1;
+  if (aiAbortController) {
+    aiAbortController.abort();
+    aiAbortController = null;
+  }
+  if (aiAudio) {
+    aiSkipNextEnd = true;
+    aiAudio.pause();
+    aiAudio = null;
+  }
+  if (aiCurrentUrl) {
+    URL.revokeObjectURL(aiCurrentUrl);
+    aiCurrentUrl = null;
+  }
+}
+
+async function playAiChunk() {
+  if (!textChunks.length) {
+    setStatus("error", "No text available to read.");
+    return;
+  }
+  if (currentChunkIndex >= textChunks.length) {
+    state.currentChunk = textChunks.length;
+    setStatus("finished", "");
+    return;
+  }
+  const chunk = textChunks[currentChunkIndex];
+  if (!chunk) {
+    currentChunkIndex += 1;
+    playAiChunk();
+    return;
+  }
+  const token = aiPlaybackToken;
+  state.currentChunk = currentChunkIndex + 1;
+  sendStateUpdate();
+  try {
+    const blob = await fetchAiAudio(chunk, detectedLanguage, state.speed);
+    if (token !== aiPlaybackToken || !isAiMode() || state.status !== "reading") {
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    aiCurrentUrl = url;
+    const audio = new Audio(url);
+    aiAudio = audio;
+    audio.onended = () => {
+      if (aiSkipNextEnd) {
+        aiSkipNextEnd = false;
+        return;
+      }
+      URL.revokeObjectURL(url);
+      aiCurrentUrl = null;
+      if (!isAiMode() || state.status !== "reading") {
+        return;
+      }
+      currentChunkIndex += 1;
+      playAiChunk();
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      aiCurrentUrl = null;
+      setStatus("error", "AI voice failed.");
+    };
+    await audio.play();
+  } catch (error) {
+    setStatus("error", "AI voice failed.");
+  }
+}
+
+async function startAiReading() {
+  if (!isAiAvailable()) {
+    setStatus("error", "AI voice is not configured.");
+    return;
+  }
+  if (state.status === "reading") {
+    return;
+  }
+  if (state.status === "paused") {
+    resumeAiReading();
+    return;
+  }
+  if (!textChunks.length) {
+    setStatus("loading", "Loading PDF text...");
+    const ready = await prepareText();
+    if (!ready) {
+      return;
+    }
+  }
+  if (state.status === "finished" || state.status === "idle") {
+    currentChunkIndex = 0;
+  }
+  cancelSpeech();
+  stopAiPlayback();
+  setStatus("reading", "");
+  playAiChunk();
+}
+
+function pauseAiReading() {
+  if (state.status !== "reading") {
+    return;
+  }
+  if (aiAudio) {
+    aiAudio.pause();
+  }
+  setStatus("paused", "");
+}
+
+function resumeAiReading() {
+  if (state.status !== "paused") {
+    return;
+  }
+  setStatus("reading", "");
+  if (aiRestartOnResume) {
+    aiRestartOnResume = false;
+    stopAiPlayback();
+    playAiChunk();
+    return;
+  }
+  if (aiAudio) {
+    aiAudio.play();
+  } else {
+    playAiChunk();
+  }
+}
+
+function stopAiReading() {
+  stopAiPlayback();
+  currentChunkIndex = 0;
+  state.currentChunk = 0;
+  setStatus("idle", "");
+}
+
 async function startReading() {
+  if (isAiMode()) {
+    await startAiReading();
+    return;
+  }
   if (state.status === "reading") {
     return;
   }
@@ -331,6 +514,10 @@ async function startReading() {
 }
 
 function pauseReading() {
+  if (isAiMode()) {
+    pauseAiReading();
+    return;
+  }
   if (state.status !== "reading") {
     return;
   }
@@ -339,6 +526,10 @@ function pauseReading() {
 }
 
 function resumeReading() {
+  if (isAiMode()) {
+    resumeAiReading();
+    return;
+  }
   if (state.status !== "paused") {
     return;
   }
@@ -353,6 +544,10 @@ function resumeReading() {
 }
 
 function stopReading() {
+  if (isAiMode()) {
+    stopAiReading();
+    return;
+  }
   cancelSpeech();
   currentChunkIndex = 0;
   state.currentChunk = 0;
@@ -364,9 +559,15 @@ function setSpeed(speed) {
     return;
   }
   state.speed = speed;
+  if (isAiMode()) {
+    if (state.status === "paused") {
+      aiRestartOnResume = true;
+    }
+    sendStateUpdate();
+    return;
+  }
   if (state.status === "reading") {
-    cancelSpeech();
-    speakCurrentChunk();
+    sendStateUpdate();
     return;
   }
   if (state.status === "paused") {
@@ -415,10 +616,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.type === "setTtsMode") {
+    const nextMode = message.mode === "ai" ? "ai" : "system";
+    if (nextMode === "ai" && !isAiAvailable()) {
+      setStatus("error", "AI voice is not configured.");
+      sendResponse({ state });
+      return false;
+    }
+    if (state.ttsMode !== nextMode) {
+      cancelSpeech();
+      stopAiPlayback();
+      currentChunkIndex = 0;
+      state.currentChunk = 0;
+      state.ttsMode = nextMode;
+      setStatus("idle", "");
+      sendResponse({ state });
+      return false;
+    }
+    sendStateUpdate();
+    sendResponse({ state });
+    return false;
+  }
+
   sendResponse({ state });
   return false;
 });
 
 window.addEventListener("beforeunload", () => {
   speechSynthesis.cancel();
+  stopAiPlayback();
 });
