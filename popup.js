@@ -33,6 +33,8 @@ let localRestartOnResume = false;
 let localSkipNextEnd = false;
 let pdfjsModule = null;
 let pdfjsLoading = null;
+let lastKnownState = null;
+let lastKnownMode = null;
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -55,6 +57,8 @@ function updateUI(state, nextMode = mode) {
     return;
   }
 
+  lastKnownState = state;
+  lastKnownMode = nextMode;
   const label = STATUS_LABELS[state.status] || "Ready";
   statusEl.textContent = label;
   hintEl.textContent = state.message || " ";
@@ -133,20 +137,29 @@ async function sendMessageToTab(message) {
   const initial = await sendMessageInternal(tab.id, message);
   if (!initial.error) {
     if (initial.response?.state) {
-      updateUI(initial.response.state);
+      setMode("tab");
+      updateUI(initial.response.state, "tab");
     }
     return initial.response;
   }
 
   const injected = await injectContentScript(tab.id);
   if (!injected) {
-    updateUI(null);
+    if (lastKnownState) {
+      updateUI(lastKnownState, lastKnownMode || mode);
+    } else {
+      updateUI(null);
+    }
     return null;
   }
 
   const retry = await sendMessageInternal(tab.id, message);
   if (retry.error) {
-    updateUI(null);
+    if (lastKnownState) {
+      updateUI(lastKnownState, lastKnownMode || mode);
+    } else {
+      updateUI(null);
+    }
     return null;
   }
   if (retry.response?.state) {
