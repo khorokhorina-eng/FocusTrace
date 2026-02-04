@@ -21,6 +21,8 @@ OPENAI_TTS_VOICE=alloy
 PORT=8787
 ```
 
+The server loads `.env` automatically.
+
 ## 3) Run
 
 ```bash
