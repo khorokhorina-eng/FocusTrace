@@ -48,6 +48,9 @@ let localAiCurrentUrl = null;
 let localAiPlaybackToken = 0;
 let localAiRestartOnResume = false;
 let localAiSkipNextEnd = false;
+let localAiPrefetch = null;
+let localAiPrefetchController = null;
+let localAiCurrentBaseSpeed = 1;
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -95,6 +98,7 @@ function updateUI(state, nextMode = mode) {
   }
 
   pauseBtn.textContent = state.status === "paused" ? "Resume" : "Pause";
+  playBtn.textContent = state.status === "finished" ? "Read Again" : "Read Aloud";
   if (nextMode === "local") {
     playBtn.disabled = state.status === "loading";
   } else {
@@ -245,7 +249,7 @@ function splitIntoSentences(text) {
 
 function buildChunks(pages) {
   const chunks = [];
-  const maxLength = 1200;
+  const maxLength = 900;
 
   pages.forEach((pageText) => {
     const normalized = normalizeText(pageText);
@@ -379,12 +383,14 @@ async function extractPdfTextFromBuffer(buffer) {
   return { pages, totalPages: pdf.numPages };
 }
 
-async function fetchAiAudio(text, language, speed) {
+async function fetchAiAudio(text, language, speed, controller) {
   if (!AI_TTS_ENDPOINT) {
     throw new Error("AI voice is not configured.");
   }
-  const controller = new AbortController();
-  localAiAbortController = controller;
+  const usedController = controller || new AbortController();
+  if (!controller) {
+    localAiAbortController = usedController;
+  }
   const response = await fetch(AI_TTS_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -394,7 +400,7 @@ async function fetchAiAudio(text, language, speed) {
       speed,
       voice: AI_DEFAULT_VOICE,
     }),
-    signal: controller.signal,
+    signal: usedController.signal,
   });
   if (!response.ok) {
     throw new Error("AI voice request failed.");
@@ -442,6 +448,11 @@ function stopLocalAiPlayback() {
     localAiAbortController.abort();
     localAiAbortController = null;
   }
+  if (localAiPrefetchController) {
+    localAiPrefetchController.abort();
+    localAiPrefetchController = null;
+  }
+  localAiPrefetch = null;
   if (localAiAudio) {
     localAiSkipNextEnd = true;
     localAiAudio.pause();
@@ -451,6 +462,7 @@ function stopLocalAiPlayback() {
     URL.revokeObjectURL(localAiCurrentUrl);
     localAiCurrentUrl = null;
   }
+  localAiCurrentBaseSpeed = 1;
 }
 
 function cancelLocalSpeech() {
@@ -460,6 +472,62 @@ function cancelLocalSpeech() {
     localSkipNextEnd = false;
   }
   speechSynthesis.cancel();
+}
+
+function startLocalAiPrefetch(index) {
+  if (!isAiAvailable() || !localChunks.length) {
+    return;
+  }
+  if (index < 0 || index >= localChunks.length) {
+    return;
+  }
+  if (
+    localAiPrefetch &&
+    localAiPrefetch.index === index &&
+    localAiPrefetch.speed === localState.speed
+  ) {
+    return;
+  }
+  if (localAiPrefetchController) {
+    localAiPrefetchController.abort();
+  }
+  const chunk = localChunks[index];
+  if (!chunk) {
+    return;
+  }
+  const controller = new AbortController();
+  localAiPrefetchController = controller;
+  localAiPrefetch = {
+    index,
+    speed: localState.speed,
+    promise: fetchAiAudio(chunk, localLanguage, localState.speed, controller),
+  };
+}
+
+async function getLocalAiBlob(index) {
+  if (!localChunks.length) {
+    return null;
+  }
+  const speed = localState.speed;
+  if (
+    localAiPrefetch &&
+    localAiPrefetch.index === index &&
+    localAiPrefetch.speed === speed
+  ) {
+    try {
+      const blob = await localAiPrefetch.promise;
+      return { blob, baseSpeed: localAiPrefetch.speed };
+    } finally {
+      localAiPrefetch = null;
+      localAiPrefetchController = null;
+    }
+  }
+  const chunk = localChunks[index];
+  if (!chunk) {
+    return null;
+  }
+  const blob = await fetchAiAudio(chunk, localLanguage, speed);
+  return { blob, baseSpeed: speed };
 }
 
 async function playLocalAiChunk() {
@@ -480,14 +548,21 @@ async function playLocalAiChunk() {
   const token = localAiPlaybackToken;
   updateUI(localState, "local");
   try {
-    const blob = await fetchAiAudio(chunk, localLanguage, localState.speed);
+    const result = await getLocalAiBlob(localChunkIndex);
     if (token !== localAiPlaybackToken || localState.status !== "reading") {
       return;
     }
+    if (!result?.blob) {
+      setLocalStatus("error", "AI voice failed.");
+      return;
+    }
+    const { blob, baseSpeed } = result;
     const url = URL.createObjectURL(blob);
     localAiCurrentUrl = url;
     const audio = new Audio(url);
     localAiAudio = audio;
+    localAiCurrentBaseSpeed = baseSpeed;
+    audio.playbackRate = baseSpeed > 0 ? localState.speed / baseSpeed : 1;
     audio.onended = () => {
       if (localAiSkipNextEnd) {
         localAiSkipNextEnd = false;
@@ -499,6 +574,7 @@ async function playLocalAiChunk() {
         return;
       }
       localChunkIndex += 1;
+      startLocalAiPrefetch(localChunkIndex + 1);
       playLocalAiChunk();
     };
     audio.onerror = () => {
@@ -507,6 +583,7 @@ async function playLocalAiChunk() {
       setLocalStatus("error", "AI voice failed.");
     };
     await audio.play();
+    startLocalAiPrefetch(localChunkIndex + 1);
   } catch (error) {
     setLocalStatus("error", "AI voice failed.");
   }
@@ -616,6 +693,10 @@ function resumeLocalAiReading() {
     return;
   }
   if (localAiAudio) {
+    localAiAudio.playbackRate =
+      localAiCurrentBaseSpeed > 0
+        ? localState.speed / localAiCurrentBaseSpeed
+        : 1;
     localAiAudio.play();
   } else {
     playLocalAiChunk();
@@ -700,8 +781,22 @@ function setLocalSpeed(speed) {
   }
   localState.speed = speed;
   if (aiEnabled) {
+    if (localAiAudio) {
+      localAiAudio.playbackRate =
+        localAiCurrentBaseSpeed > 0
+          ? localState.speed / localAiCurrentBaseSpeed
+          : 1;
+    }
+    if (localAiPrefetchController) {
+      localAiPrefetchController.abort();
+      localAiPrefetchController = null;
+      localAiPrefetch = null;
+    }
+    if (localState.status === "reading") {
+      startLocalAiPrefetch(localChunkIndex + 1);
+    }
     if (localState.status === "paused") {
-      localAiRestartOnResume = true;
+      localAiRestartOnResume = false;
     }
     updateUI(localState, "local");
     return;

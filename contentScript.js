@@ -34,6 +34,9 @@ let aiCurrentUrl = null;
 let aiPlaybackToken = 0;
 let aiRestartOnResume = false;
 let aiSkipNextEnd = false;
+let aiPrefetch = null;
+let aiPrefetchController = null;
+let aiCurrentBaseSpeed = 1;
 
 async function loadPdfjs() {
   if (pdfjsModule) {
@@ -69,12 +72,14 @@ function isAiAvailable() {
   return Boolean(AI_TTS_ENDPOINT);
 }
 
-async function fetchAiAudio(text, language, speed) {
+async function fetchAiAudio(text, language, speed, controller) {
   if (!isAiAvailable()) {
     throw new Error("AI voice is not configured.");
   }
-  const controller = new AbortController();
-  aiAbortController = controller;
+  const usedController = controller || new AbortController();
+  if (!controller) {
+    aiAbortController = usedController;
+  }
   const response = await fetch(AI_TTS_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -84,7 +89,7 @@ async function fetchAiAudio(text, language, speed) {
       speed,
       voice: AI_DEFAULT_VOICE,
     }),
-    signal: controller.signal,
+    signal: usedController.signal,
   });
   if (!response.ok) {
     throw new Error("AI voice request failed.");
@@ -146,7 +151,7 @@ function splitIntoSentences(text) {
 
 function buildChunks(pages) {
   const chunks = [];
-  const maxLength = 1200;
+  const maxLength = 900;
 
   pages.forEach((pageText) => {
     const normalized = normalizeText(pageText);
@@ -356,6 +361,11 @@ function stopAiPlayback() {
     aiAbortController.abort();
     aiAbortController = null;
   }
+  if (aiPrefetchController) {
+    aiPrefetchController.abort();
+    aiPrefetchController = null;
+  }
+  aiPrefetch = null;
   if (aiAudio) {
     aiSkipNextEnd = true;
     aiAudio.pause();
@@ -365,6 +375,63 @@ function stopAiPlayback() {
     URL.revokeObjectURL(aiCurrentUrl);
     aiCurrentUrl = null;
   }
+  aiCurrentBaseSpeed = 1;
+}
+
+function startAiPrefetch(index) {
+  if (!isAiAvailable() || !textChunks.length) {
+    return;
+  }
+  if (index < 0 || index >= textChunks.length) {
+    return;
+  }
+  if (
+    aiPrefetch &&
+    aiPrefetch.index === index &&
+    aiPrefetch.speed === state.speed
+  ) {
+    return;
+  }
+  if (aiPrefetchController) {
+    aiPrefetchController.abort();
+  }
+  const chunk = textChunks[index];
+  if (!chunk) {
+    return;
+  }
+  const controller = new AbortController();
+  aiPrefetchController = controller;
+  aiPrefetch = {
+    index,
+    speed: state.speed,
+    promise: fetchAiAudio(chunk, detectedLanguage, state.speed, controller),
+  };
+}
+
+async function getAiBlob(index) {
+  if (!textChunks.length) {
+    return null;
+  }
+  const speed = state.speed;
+  if (
+    aiPrefetch &&
+    aiPrefetch.index === index &&
+    aiPrefetch.speed === speed
+  ) {
+    try {
+      const blob = await aiPrefetch.promise;
+      return { blob, baseSpeed: aiPrefetch.speed };
+    } finally {
+      aiPrefetch = null;
+      aiPrefetchController = null;
+    }
+  }
+  const chunk = textChunks[index];
+  if (!chunk) {
+    return null;
+  }
+  const blob = await fetchAiAudio(chunk, detectedLanguage, speed);
+  return { blob, baseSpeed: speed };
 }
 
 async function playAiChunk() {
@@ -387,14 +454,21 @@ async function playAiChunk() {
   state.currentChunk = currentChunkIndex + 1;
   sendStateUpdate();
   try {
-    const blob = await fetchAiAudio(chunk, detectedLanguage, state.speed);
+    const result = await getAiBlob(currentChunkIndex);
     if (token !== aiPlaybackToken || !isAiMode() || state.status !== "reading") {
       return;
     }
+    if (!result?.blob) {
+      setStatus("error", "AI voice failed.");
+      return;
+    }
+    const { blob, baseSpeed } = result;
     const url = URL.createObjectURL(blob);
     aiCurrentUrl = url;
     const audio = new Audio(url);
     aiAudio = audio;
+    aiCurrentBaseSpeed = baseSpeed;
+    audio.playbackRate = baseSpeed > 0 ? state.speed / baseSpeed : 1;
     audio.onended = () => {
       if (aiSkipNextEnd) {
         aiSkipNextEnd = false;
@@ -406,6 +480,7 @@ async function playAiChunk() {
         return;
       }
       currentChunkIndex += 1;
+      startAiPrefetch(currentChunkIndex + 1);
       playAiChunk();
     };
     audio.onerror = () => {
@@ -414,6 +489,7 @@ async function playAiChunk() {
       setStatus("error", "AI voice failed.");
     };
     await audio.play();
+    startAiPrefetch(currentChunkIndex + 1);
   } catch (error) {
     setStatus("error", "AI voice failed.");
   }
@@ -469,6 +545,8 @@ function resumeAiReading() {
     return;
   }
   if (aiAudio) {
+    aiAudio.playbackRate =
+      aiCurrentBaseSpeed > 0 ? state.speed / aiCurrentBaseSpeed : 1;
     aiAudio.play();
   } else {
     playAiChunk();
@@ -560,8 +638,20 @@ function setSpeed(speed) {
   }
   state.speed = speed;
   if (isAiMode()) {
+    if (aiAudio) {
+      aiAudio.playbackRate =
+        aiCurrentBaseSpeed > 0 ? state.speed / aiCurrentBaseSpeed : 1;
+    }
+    if (aiPrefetchController) {
+      aiPrefetchController.abort();
+      aiPrefetchController = null;
+      aiPrefetch = null;
+    }
+    if (state.status === "reading") {
+      startAiPrefetch(currentChunkIndex + 1);
+    }
     if (state.status === "paused") {
-      aiRestartOnResume = true;
+      aiRestartOnResume = false;
     }
     sendStateUpdate();
     return;
