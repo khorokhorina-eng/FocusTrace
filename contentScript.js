@@ -279,6 +279,9 @@ async function prepareText() {
     state.language = detectedLanguage;
     selectedVoice = pickVoiceForLanguage(detectedLanguage);
     setStatus("idle", "");
+    if (isAiMode()) {
+      startAiPrefetch(0);
+    }
     return true;
   } catch (error) {
     const message =
@@ -720,6 +723,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       state.currentChunk = 0;
       state.ttsMode = nextMode;
       setStatus("idle", "");
+      if (state.ttsMode === "ai" && textChunks.length) {
+        startAiPrefetch(0);
+      }
       sendResponse({ state });
       return false;
     }

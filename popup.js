@@ -6,8 +6,6 @@ const stopBtn = document.getElementById("stop");
 const speedSelect = document.getElementById("speed");
 const openFileBtn = document.getElementById("openFile");
 const fileInput = document.getElementById("fileInput");
-const aiToggle = document.getElementById("aiToggle");
-const aiHint = document.getElementById("aiHint");
 
 const AI_CONFIG = window.PDF_TTS_CONFIG || {};
 const AI_TTS_ENDPOINT = AI_CONFIG.aiEndpoint || "";
@@ -41,7 +39,7 @@ let pdfjsModule = null;
 let pdfjsLoading = null;
 let lastKnownState = null;
 let lastKnownMode = null;
-let aiEnabled = Boolean(AI_CONFIG.aiEnabledByDefault && AI_TTS_ENDPOINT);
+let aiEnabled = isAiAvailable();
 let localAiAudio = null;
 let localAiAbortController = null;
 let localAiCurrentUrl = null;
@@ -59,16 +57,6 @@ function setMode(nextMode) {
   } else {
     openFileBtn.classList.add("hidden");
   }
-}
-
-function setAiHint(text) {
-  if (!text) {
-    aiHint.textContent = "";
-    aiHint.classList.add("hidden");
-    return;
-  }
-  aiHint.textContent = text;
-  aiHint.classList.remove("hidden");
 }
 
 function isAiAvailable() {
@@ -210,18 +198,12 @@ async function refreshState() {
   if (response?.state) {
     setMode("tab");
     updateUI(response.state, "tab");
-    if (typeof response.state.ttsMode === "string") {
-      aiEnabled = response.state.ttsMode === "ai";
-      aiToggle.checked = aiEnabled;
+    aiEnabled = isAiAvailable();
+    if (isAiAvailable() && response.state.ttsMode !== "ai") {
+      await sendMessageToTab({ type: "setTtsMode", mode: "ai" });
     }
-    if (response.state.aiAvailable === false) {
-      aiToggle.disabled = true;
-      setAiHint("AI voice requires server setup.");
-    } else {
-      aiToggle.disabled = !isAiAvailable();
-      if (!isAiAvailable()) {
-        setAiHint("AI voice requires server setup.");
-      }
+    if (!isAiAvailable()) {
+      hintEl.textContent = "AI voice requires server setup.";
     }
     return;
   }
@@ -639,6 +621,9 @@ async function loadLocalFile(file) {
     localVoice = pickVoiceForLanguage(localLanguage);
     localState.message = `Selected file: ${file.name}`;
     setLocalStatus("idle", localState.message);
+    if (aiEnabled) {
+      startLocalAiPrefetch(0);
+    }
   } catch (error) {
     setLocalStatus("error", "Unable to read the selected file.");
   }
@@ -826,6 +811,9 @@ playBtn.addEventListener("click", async () => {
     startLocalReading();
     return;
   }
+  if (isAiAvailable()) {
+    await sendMessageToTab({ type: "setTtsMode", mode: "ai" });
+  }
   const ok = await handleTabAction({ type: "start" });
   if (!ok) {
     setLocalStatus("idle", "Select a PDF file to start.");
@@ -866,39 +854,8 @@ speedSelect.addEventListener("change", (event) => {
   }
 });
 
-aiToggle.addEventListener("change", async (event) => {
-  const nextEnabled = event.target.checked;
-  if (!isAiAvailable()) {
-    aiEnabled = false;
-    aiToggle.checked = false;
-    setAiHint("AI voice requires server setup.");
-    return;
-  }
-  aiEnabled = nextEnabled;
-  setAiHint("");
-  if (mode === "tab") {
-    const response = await sendMessageToTab({
-      type: "setTtsMode",
-      mode: aiEnabled ? "ai" : "system",
-    });
-    if (response?.state) {
-      setMode("tab");
-      updateUI(response.state, "tab");
-    }
-    return;
-  }
-  cancelLocalSpeech();
-  stopLocalAiPlayback();
-  localChunkIndex = 0;
-  setLocalStatus("idle", localState.message);
-});
-
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "stateUpdate" && mode === "tab") {
-    if (typeof message.state.ttsMode === "string") {
-      aiEnabled = message.state.ttsMode === "ai";
-      aiToggle.checked = aiEnabled;
-    }
     updateUI(message.state, "tab");
   }
 });
@@ -914,10 +871,8 @@ fileInput.addEventListener("change", (event) => {
 
 document.addEventListener("DOMContentLoaded", () => {
   updateUI(null);
-  aiToggle.checked = aiEnabled;
-  aiToggle.disabled = !isAiAvailable();
   if (!isAiAvailable()) {
-    setAiHint("AI voice requires server setup.");
+    hintEl.textContent = "AI voice requires server setup.";
   }
   refreshState();
 });

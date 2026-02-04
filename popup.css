@@ -70,17 +70,6 @@ button:disabled {
   gap: 12px;
 }
 
-.ai-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.ai-toggle input {
-  width: 14px;
-  height: 14px;
-}
 
 select {
   padding: 6px;
