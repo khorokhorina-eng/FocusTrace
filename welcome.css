@@ -60,6 +60,19 @@ h2 {
   color: #475569;
 }
 
+.lead {
+  margin: 8px 0 12px;
+  color: #334155;
+}
+
+.illustration {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  margin: 6px 0 16px;
+}
+
 .steps {
   padding-left: 20px;
   line-height: 1.6;
