@@ -1,0 +1,88 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 28px;
+  max-width: 720px;
+  width: 100%;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.logo {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: #e11d48;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0 0 4px 0;
+  font-size: 24px;
+}
+
+h2 {
+  margin: 20px 0 8px;
+  font-size: 18px;
+}
+
+.subtitle {
+  margin: 0;
+  color: #475569;
+}
+
+.steps {
+  padding-left: 20px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.hint {
+  margin-top: 12px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.divider {
+  margin: 24px 0;
+  height: 1px;
+  background: #e2e8f0;
+}
+
+.footer {
+  margin-top: 12px;
+  font-size: 14px;
+  color: #475569;
+}
