@@ -18,14 +18,32 @@
         </div>
 
         <h2>Most important step: Pin the extension</h2>
-        <p class="lead">
-          Pin the extension so it stays visible in the toolbar.
-        </p>
-        <img
-          class="illustration"
-          src="welcome-pin.svg"
-          alt="Pin the extension from the puzzle menu"
-        />
+        <p class="lead">Pin the extension so it stays visible in the toolbar.</p>
+        <div class="shot shot-pin">
+          <img
+            src="assets/welcome-pin.png"
+            alt="Open the extensions menu and pin the extension"
+          />
+          <div class="mask mask-pin"></div>
+          <img
+            class="overlay-icon overlay-pin-icon"
+            src="icons/icon-128.svg"
+            alt="PDF Text to Speech icon"
+          />
+          <div class="overlay-label overlay-pin-label">PDF Text to Speech</div>
+        </div>
+        <div class="shot shot-pin-done">
+          <img
+            src="assets/welcome-pin-done.png"
+            alt="The extension pinned in the toolbar"
+          />
+          <div class="mask mask-pin-done"></div>
+          <img
+            class="overlay-icon overlay-pin-done-icon"
+            src="icons/icon-128.svg"
+            alt="PDF Text to Speech icon"
+          />
+        </div>
         <ol class="steps">
           <li>Click the Extensions icon (1).</li>
           <li>Find <strong>PDF Text to Speech</strong>.</li>
@@ -39,14 +57,34 @@
         <div class="divider"></div>
 
         <h2>How to use</h2>
-        <p class="lead">
-          Open a new tab, then upload a PDF in the extension.
-        </p>
-        <img
-          class="illustration"
-          src="welcome-use.svg"
-          alt="Open the extension and upload a PDF"
-        />
+        <p class="lead">Open a new tab, then upload a PDF in the extension.</p>
+        <div class="shot shot-use">
+          <img
+            src="assets/welcome-use.png"
+            alt="Open the extension and upload a PDF"
+          />
+          <svg class="overlay" viewBox="0 0 100 100" aria-hidden="true">
+            <defs>
+              <marker
+                id="arrowhead"
+                markerWidth="6"
+                markerHeight="6"
+                refX="5"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0 0 L6 3 L0 6 Z" fill="#e11d48"></path>
+              </marker>
+            </defs>
+            <circle cx="70" cy="18" r="6.5" fill="#ffffff" stroke="#e11d48" stroke-width="1.5"></circle>
+            <text x="70" y="20.2" text-anchor="middle" font-size="6" font-weight="700" fill="#0f172a">1</text>
+            <path d="M72 22 C78 26, 82 30, 86 34" fill="none" stroke="#e11d48" stroke-width="1.5" marker-end="url(#arrowhead)"></path>
+
+            <circle cx="64" cy="40" r="6.5" fill="#ffffff" stroke="#e11d48" stroke-width="1.5"></circle>
+            <text x="64" y="42.2" text-anchor="middle" font-size="6" font-weight="700" fill="#0f172a">2</text>
+            <path d="M66 44 C72 48, 76 52, 80 56" fill="none" stroke="#e11d48" stroke-width="1.5" marker-end="url(#arrowhead)"></path>
+          </svg>
+        </div>
         <ol class="steps">
           <li>Open a new tab in Chrome.</li>
           <li>Click the extension icon (1).</li>

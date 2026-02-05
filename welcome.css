@@ -65,12 +65,84 @@ h2 {
   color: #334155;
 }
 
-.illustration {
+.shot {
+  position: relative;
   width: 100%;
   border-radius: 14px;
   border: 1px solid #e2e8f0;
   background: #f8fafc;
+  overflow: hidden;
   margin: 6px 0 16px;
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.mask {
+  position: absolute;
+  background: #ffffff;
+  border-radius: 8px;
+}
+
+.overlay-icon {
+  position: absolute;
+  width: 4%;
+  height: auto;
+  border-radius: 6px;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
+}
+
+.overlay-label {
+  position: absolute;
+  background: #ffffff;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.12);
+}
+
+.shot-pin .mask-pin {
+  left: 58%;
+  top: 44%;
+  width: 30%;
+  height: 10%;
+}
+
+.shot-pin .overlay-pin-icon {
+  left: 60%;
+  top: 45%;
+}
+
+.shot-pin .overlay-pin-label {
+  left: 65%;
+  top: 45%;
+}
+
+.shot-pin-done .mask-pin-done {
+  left: 73%;
+  top: 9%;
+  width: 10%;
+  height: 8%;
+  border-radius: 10px;
+}
+
+.shot-pin-done .overlay-pin-done-icon {
+  left: 74%;
+  top: 9.5%;
+  width: 4.5%;
 }
 
 .steps {
