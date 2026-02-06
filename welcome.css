@@ -5,70 +5,54 @@
 body {
   margin: 0;
   font-family: Arial, Helvetica, sans-serif;
-  background: #f8fafc;
+  background: #ffffff;
   color: #0f172a;
 }
 
 .page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  padding: 32px 20px 60px;
 }
 
-.card {
-  background: #ffffff;
-  border-radius: 16px;
-  padding: 28px;
-  max-width: 720px;
-  width: 100%;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+.wrap {
+  max-width: 980px;
+  margin: 0 auto;
 }
 
-.header {
+.hero {
   display: flex;
   align-items: center;
   gap: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 
-.logo {
-  width: 52px;
-  height: 52px;
-  border-radius: 12px;
-  background: #e11d48;
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
+.app-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.15);
+  object-fit: cover;
 }
 
 h1 {
-  margin: 0 0 4px 0;
-  font-size: 24px;
+  margin: 0 0 6px 0;
+  font-size: 26px;
 }
 
 h2 {
-  margin: 20px 0 8px;
-  font-size: 18px;
+  margin: 26px 0 8px;
+  font-size: 20px;
 }
 
 .subtitle {
-  margin: 0;
+  margin: 0 0 16px;
   color: #475569;
-}
-
-.lead {
-  margin: 8px 0 12px;
-  color: #334155;
+  line-height: 1.5;
 }
 
 .shot {
   position: relative;
   width: 100%;
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid #e2e8f0;
   background: #f8fafc;
   overflow: hidden;
@@ -87,62 +71,6 @@ h2 {
   width: 100%;
   height: 100%;
   pointer-events: none;
-}
-
-.mask {
-  position: absolute;
-  background: #ffffff;
-  border-radius: 8px;
-}
-
-.overlay-icon {
-  position: absolute;
-  width: 4%;
-  height: auto;
-  border-radius: 6px;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
-}
-
-.overlay-label {
-  position: absolute;
-  background: #ffffff;
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #0f172a;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.12);
-}
-
-.shot-pin .mask-pin {
-  left: 58%;
-  top: 44%;
-  width: 30%;
-  height: 10%;
-}
-
-.shot-pin .overlay-pin-icon {
-  left: 60%;
-  top: 45%;
-}
-
-.shot-pin .overlay-pin-label {
-  left: 65%;
-  top: 45%;
-}
-
-.shot-pin-done .mask-pin-done {
-  left: 73%;
-  top: 9%;
-  width: 10%;
-  height: 8%;
-  border-radius: 10px;
-}
-
-.shot-pin-done .overlay-pin-done-icon {
-  left: 74%;
-  top: 9.5%;
-  width: 4.5%;
 }
 
 .steps {
