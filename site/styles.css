@@ -149,21 +149,31 @@ h2 {
   gap: 20px;
 }
 
-.pricing-cta {
-  margin-top: 20px;
-}
-
 .card {
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 16px;
   padding: 20px;
   position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 .card.highlight {
   border-color: var(--primary-2);
   box-shadow: 0 10px 24px rgba(139, 76, 246, 0.18);
+}
+
+.pricing-card:hover,
+.pricing-card:focus-within {
+  border-color: var(--primary-2);
+  box-shadow: 0 12px 24px rgba(139, 76, 246, 0.2);
+  transform: translateY(-2px);
+}
+
+.pricing-card.selected {
+  border-color: var(--primary-1);
+  box-shadow: 0 16px 32px rgba(139, 76, 246, 0.24);
+  transform: translateY(-2px);
 }
 
 .badge {
@@ -181,6 +191,11 @@ h2 {
   font-size: 20px;
   font-weight: 700;
   margin-bottom: 8px;
+}
+
+.price-cta {
+  margin-top: 16px;
+  width: 100%;
 }
 
 .card ul,

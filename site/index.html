@@ -55,15 +55,16 @@
             Start free, then unlock more listening time with a simple plan.
           </p>
           <div class="pricing-grid">
-            <div class="card">
+            <div class="card pricing-card" data-plan="free">
               <h3>Free</h3>
               <p class="price">5 minutes</p>
               <ul>
                 <li>Try the AI voice</li>
                 <li>No credit card required</li>
               </ul>
+              <a class="btn ghost price-cta" href="#install">Get Started</a>
             </div>
-            <div class="card highlight">
+            <div class="card pricing-card highlight selected" data-plan="monthly">
               <div class="badge">Most popular</div>
               <h3>Monthly</h3>
               <p class="price">$9.99 / month</p>
@@ -72,8 +73,9 @@
                 <li>Auto language detection</li>
                 <li>Priority support</li>
               </ul>
+              <a class="btn primary price-cta" href="#install">Get Started</a>
             </div>
-            <div class="card">
+            <div class="card pricing-card" data-plan="annual">
               <h3>Annual</h3>
               <p class="price">$89.99 / year</p>
               <ul>
@@ -81,10 +83,8 @@
                 <li>Save 25% vs monthly</li>
                 <li>Priority support</li>
               </ul>
+              <a class="btn ghost price-cta" href="#install">Get Started</a>
             </div>
-          </div>
-          <div class="pricing-cta">
-            <a class="btn primary" href="#install">Get Started</a>
           </div>
           <div class="addons">
             <h4>Top-up hours</h4>
@@ -190,5 +190,14 @@
         </p>
       </div>
     </footer>
+    <script>
+      const pricingCards = document.querySelectorAll(".pricing-card");
+      pricingCards.forEach((card) => {
+        card.addEventListener("click", () => {
+          pricingCards.forEach((item) => item.classList.remove("selected"));
+          card.classList.add("selected");
+        });
+      });
+    </script>
   </body>
 </html>
