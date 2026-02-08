@@ -2,10 +2,19 @@
   box-sizing: border-box;
 }
 
+:root {
+  --primary-1: #f255a0;
+  --primary-2: #8b4cf6;
+  --primary-3: #4a6fe8;
+  --dark: #0f172a;
+  --muted: #475569;
+  --gradient: linear-gradient(135deg, #f255a0 0%, #8b4cf6 52%, #4a6fe8 100%);
+}
+
 body {
   margin: 0;
   font-family: Arial, Helvetica, sans-serif;
-  color: #0f172a;
+  color: var(--dark);
   background: #ffffff;
 }
 
@@ -60,7 +69,7 @@ a {
 }
 
 .btn.primary {
-  background: #2563eb;
+  background: var(--gradient);
   color: #ffffff;
 }
 
@@ -71,8 +80,9 @@ a {
 }
 
 .hero {
-  padding: 60px 0 40px;
-  background: #f8fafc;
+  padding: 70px 0 50px;
+  background: var(--gradient);
+  color: #ffffff;
 }
 
 .hero-grid {
@@ -88,7 +98,7 @@ a {
 }
 
 .hero-copy p {
-  color: #475569;
+  color: rgba(255, 255, 255, 0.85);
   line-height: 1.6;
 }
 
@@ -101,7 +111,7 @@ a {
 
 .hero-note {
   font-size: 14px;
-  color: #64748b;
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .hero-visual img {
@@ -142,15 +152,15 @@ h2 {
 }
 
 .card.highlight {
-  border-color: #2563eb;
-  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.12);
+  border-color: var(--primary-2);
+  box-shadow: 0 10px 24px rgba(139, 76, 246, 0.18);
 }
 
 .badge {
   position: absolute;
   top: 16px;
   right: 16px;
-  background: #2563eb;
+  background: var(--primary-2);
   color: #ffffff;
   padding: 4px 8px;
   border-radius: 999px;
@@ -173,7 +183,7 @@ h2 {
 
 .addons {
   margin-top: 28px;
-  background: #f1f5f9;
+  background: #f5f3ff;
   border-radius: 12px;
   padding: 18px;
 }
@@ -199,7 +209,7 @@ h2 {
 
 input,
 textarea {
-  border: 1px solid #cbd5f5;
+  border: 1px solid #d4d4f5;
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 14px;
@@ -220,6 +230,20 @@ textarea {
   text-align: center;
   color: #64748b;
   font-size: 13px;
+}
+
+.policy-links {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.policy-links a {
+  color: var(--primary-2);
+  font-weight: 600;
 }
 
 @media (max-width: 720px) {
