@@ -119,6 +119,30 @@ a {
   height: auto;
 }
 
+.hero-card {
+  width: min(360px, 90%);
+  margin: 0 auto;
+  background: #ffffff;
+  border-radius: 22px;
+  padding: 26px 20px 22px;
+  text-align: center;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
+}
+
+.hero-card-icon {
+  width: 140px;
+  height: 140px;
+  object-fit: contain;
+  filter: hue-rotate(315deg) saturate(1.2) brightness(1.05);
+}
+
+.hero-card-title {
+  margin-top: 14px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
 .section {
   padding: 56px 0;
 }
@@ -141,6 +165,39 @@ h2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 20px;
+}
+
+.pricing-toggle {
+  display: inline-flex;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  padding: 4px;
+  gap: 6px;
+  margin-bottom: 20px;
+  background: #ffffff;
+}
+
+.toggle-btn {
+  border: none;
+  background: transparent;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.toggle-btn.active {
+  background: var(--gradient);
+  color: #ffffff;
+}
+
+.pricing-grid[data-plan="monthly"] .plan-annual {
+  display: none;
+}
+
+.pricing-grid[data-plan="annual"] .plan-monthly {
+  display: none;
 }
 
 .card {
@@ -186,6 +243,13 @@ h2 {
   background: #f5f3ff;
   border-radius: 12px;
   padding: 18px;
+}
+
+.benefits {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .install {
