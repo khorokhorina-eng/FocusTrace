@@ -38,15 +38,12 @@
             </p>
           </div>
           <div class="hero-visual">
-            <div class="hero-card">
-              <img
-                class="hero-card-icon"
-                src="assets/hero-icon.png"
-                onerror="this.onerror=null;this.src='assets/hero.svg';"
-                alt="PDF Text to Speech icon"
-              />
-              <div class="hero-card-title">Read PDFs aloud</div>
-            </div>
+            <img
+              class="hero-image"
+              src="assets/hero-icon.png"
+              onerror="this.onerror=null;this.src='assets/hero.svg';"
+              alt="Read PDFs aloud"
+            />
           </div>
         </div>
       </section>
@@ -57,15 +54,7 @@
           <p class="section-subtitle">
             Start free, then unlock more listening time with a simple plan.
           </p>
-          <div class="pricing-toggle" role="tablist" aria-label="Billing cycle">
-            <button class="toggle-btn active" type="button" data-plan="monthly">
-              Monthly
-            </button>
-            <button class="toggle-btn" type="button" data-plan="annual">
-              Annual
-            </button>
-          </div>
-          <div class="pricing-grid" id="pricingGrid" data-plan="monthly">
+          <div class="pricing-grid">
             <div class="card">
               <h3>Free</h3>
               <p class="price">5 minutes</p>
@@ -74,7 +63,7 @@
                 <li>No credit card required</li>
               </ul>
             </div>
-            <div class="card highlight plan-monthly">
+            <div class="card highlight">
               <div class="badge">Most popular</div>
               <h3>Monthly</h3>
               <p class="price">$9.99 / month</p>
@@ -84,7 +73,7 @@
                 <li>Priority support</li>
               </ul>
             </div>
-            <div class="card plan-annual">
+            <div class="card">
               <h3>Annual</h3>
               <p class="price">$89.99 / year</p>
               <ul>
@@ -93,6 +82,9 @@
                 <li>Priority support</li>
               </ul>
             </div>
+          </div>
+          <div class="pricing-cta">
+            <a class="btn primary" href="#install">Get Started</a>
           </div>
           <div class="addons">
             <h4>Top-up hours</h4>
@@ -198,16 +190,5 @@
         </p>
       </div>
     </footer>
-    <script>
-      const pricingGrid = document.getElementById("pricingGrid");
-      const toggleButtons = document.querySelectorAll(".toggle-btn");
-      toggleButtons.forEach((button) => {
-        button.addEventListener("click", () => {
-          toggleButtons.forEach((btn) => btn.classList.remove("active"));
-          button.classList.add("active");
-          pricingGrid.dataset.plan = button.dataset.plan;
-        });
-      });
-    </script>
   </body>
 </html>
