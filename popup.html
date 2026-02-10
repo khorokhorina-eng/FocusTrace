@@ -26,6 +26,20 @@
           <option value="1.5">1.5x</option>
         </select>
       </label>
+      <div id="account" class="account">
+        <div class="account-row">
+          <span id="authStatus">Checking access…</span>
+          <div class="account-actions">
+            <button id="authButton" class="secondary small hidden">
+              Sign In
+            </button>
+            <button id="upgradeButton" class="secondary small hidden">
+              Get Access
+            </button>
+          </div>
+        </div>
+        <p id="tokenInfo" class="hint hidden"></p>
+      </div>
       <p id="hint" class="hint">Open a PDF in Chrome to start.</p>
     </main>
     <script src="config.js"></script>

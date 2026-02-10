@@ -70,6 +70,30 @@ button:disabled {
   gap: 12px;
 }
 
+.account {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.account-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+button.small {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
 
 select {
   padding: 6px;

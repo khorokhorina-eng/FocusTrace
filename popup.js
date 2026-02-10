@@ -6,6 +6,10 @@ const stopBtn = document.getElementById("stop");
 const speedSelect = document.getElementById("speed");
 const openFileBtn = document.getElementById("openFile");
 const fileInput = document.getElementById("fileInput");
+const authStatusEl = document.getElementById("authStatus");
+const authButton = document.getElementById("authButton");
+const upgradeButton = document.getElementById("upgradeButton");
+const tokenInfo = document.getElementById("tokenInfo");
 
 const AI_CONFIG = window.PDF_TTS_CONFIG || {};
 const AI_TTS_ENDPOINT = AI_CONFIG.aiEndpoint || "";
@@ -49,6 +53,13 @@ let localAiSkipNextEnd = false;
 let localAiPrefetch = null;
 let localAiPrefetchController = null;
 let localAiCurrentBaseSpeed = 1;
+let authState = {
+  status: "unknown",
+  authenticated: false,
+  paid: false,
+  tokens: null,
+  trial: null,
+};
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -59,6 +70,127 @@ function setMode(nextMode) {
   }
 }
 
+function isPaywallAvailable() {
+  return typeof window.paywall?.getUser === "function";
+}
+
+function updateAuthUI() {
+  const { status, authenticated, paid, tokens, trial } = authState;
+  if (!isPaywallAvailable()) {
+    authStatusEl.textContent = "Paywall not configured.";
+    authButton.classList.add("hidden");
+    upgradeButton.classList.add("hidden");
+    tokenInfo.classList.add("hidden");
+    return;
+  }
+
+  if (status === "loading") {
+    authStatusEl.textContent = "Checking access...";
+    authButton.classList.add("hidden");
+    upgradeButton.classList.add("hidden");
+    tokenInfo.classList.add("hidden");
+    return;
+  }
+
+  if (!authenticated) {
+    authStatusEl.textContent = "Sign in to continue.";
+    authButton.classList.remove("hidden");
+    upgradeButton.classList.add("hidden");
+    tokenInfo.classList.add("hidden");
+    return;
+  }
+
+  if (paid) {
+    authStatusEl.textContent = "Subscription active.";
+    authButton.classList.add("hidden");
+    upgradeButton.classList.add("hidden");
+  } else {
+    authStatusEl.textContent = trial ? "Trial active." : "No active subscription.";
+    authButton.classList.add("hidden");
+    upgradeButton.classList.remove("hidden");
+  }
+
+  if (typeof tokens === "number") {
+    tokenInfo.textContent = `Remaining tokens: ${tokens}`;
+    tokenInfo.classList.remove("hidden");
+  } else {
+    tokenInfo.classList.add("hidden");
+  }
+}
+
+async function refreshAuth() {
+  if (!isPaywallAvailable()) {
+    authState = {
+      status: "unavailable",
+      authenticated: false,
+      paid: false,
+      tokens: null,
+      trial: null,
+    };
+    updateAuthUI();
+    return;
+  }
+  authState.status = "loading";
+  updateAuthUI();
+  try {
+    const info = await window.paywall.getUser();
+    const standardTokens = info.balances?.find(
+      (balance) => balance.type === "standard"
+    );
+    authState = {
+      status: "ready",
+      authenticated: true,
+      paid: Boolean(info.paid),
+      tokens:
+        typeof standardTokens?.count === "number"
+          ? standardTokens.count
+          : null,
+      trial: info.trial || null,
+    };
+  } catch (error) {
+    authState = {
+      status: "unauthorized",
+      authenticated: false,
+      paid: false,
+      tokens: null,
+      trial: null,
+    };
+  }
+  updateAuthUI();
+}
+
+async function openPaywall() {
+  if (!window.paywall?.open) {
+    return;
+  }
+  try {
+    await window.paywall.open({ resolveEvent: "signed-in" });
+  } catch (error) {
+    // ignore
+  }
+  await refreshAuth();
+}
+
+async function ensureAccess() {
+  if (!isPaywallAvailable()) {
+    return true;
+  }
+  if (authState.status === "unknown") {
+    await refreshAuth();
+  }
+  if (!authState.authenticated) {
+    await openPaywall();
+    return false;
+  }
+  if (authState.paid) {
+    return true;
+  }
+  if (typeof authState.tokens === "number" && authState.tokens > 0) {
+    return true;
+  }
+  await openPaywall();
+  return false;
+}
 function isAiAvailable() {
   return Boolean(AI_TTS_ENDPOINT);
 }
@@ -808,6 +940,10 @@ async function handleTabAction(message) {
 }
 
 playBtn.addEventListener("click", async () => {
+  const hasAccess = await ensureAccess();
+  if (!hasAccess) {
+    return;
+  }
   if (mode === "local") {
     startLocalReading();
     return;
@@ -865,6 +1001,14 @@ openFileBtn.addEventListener("click", () => {
   fileInput.click();
 });
 
+authButton.addEventListener("click", () => {
+  openPaywall();
+});
+
+upgradeButton.addEventListener("click", () => {
+  openPaywall();
+});
+
 fileInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   loadLocalFile(file);
@@ -875,5 +1019,6 @@ document.addEventListener("DOMContentLoaded", () => {
   if (!isAiAvailable()) {
     hintEl.textContent = "AI voice requires server setup.";
   }
+  refreshAuth();
   refreshState();
 });
