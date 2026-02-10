@@ -16,14 +16,15 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["activeTab", "scripting"],
+  "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
     "*://*/*.pdf",
     "*://*/*.PDF",
     "file:///*.pdf",
     "file:///*.PDF",
     "http://localhost:8787/*",
-    "https://your-tts-proxy.example.com/*"
+    "https://your-tts-proxy.example.com/*",
+    "https://*.monetize.software/*"
   ],
   "content_scripts": [
     {
