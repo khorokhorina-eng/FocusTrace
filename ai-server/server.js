@@ -21,19 +21,25 @@ app.post("/tts", async (req, res) => {
     return;
   }
 
-  const { text, speed, voice } = req.body || {};
-  if (!text || typeof text !== "string") {
-    res.status(400).json({ error: "Missing text" });
+  const { text, input, speed, voice } = req.body || {};
+  const payloadInput =
+    typeof input === "string" && input.trim().length
+      ? input
+      : typeof text === "string"
+      ? text
+      : "";
+  if (!payloadInput) {
+    res.status(400).json({ error: "Missing input" });
     return;
   }
-  if (text.length > 4000) {
+  if (payloadInput.length > 4000) {
     res.status(400).json({ error: "Text too long" });
     return;
   }
 
   const payload = {
     model: OPENAI_TTS_MODEL,
-    input: text,
+    input: payloadInput,
     voice: voice || OPENAI_TTS_VOICE,
     response_format: "mp3",
   };

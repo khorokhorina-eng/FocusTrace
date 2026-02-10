@@ -377,10 +377,11 @@ async function fetchAiAudio(text, language, speed, controller) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      input: text,
       text,
-      language,
       speed,
       voice: AI_DEFAULT_VOICE,
+      response_format: "mp3",
     }),
     signal: usedController.signal,
   });
