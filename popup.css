@@ -17,19 +17,6 @@ body {
   gap: 12px;
 }
 
-.title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  object-fit: cover;
-}
-
 h1 {
   font-size: 16px;
   margin: 0;

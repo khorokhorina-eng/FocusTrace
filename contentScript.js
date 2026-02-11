@@ -78,24 +78,11 @@ function isAiMode() {
   return state.ttsMode === "ai";
 }
 
-function openPaywallFromContent() {
-  if (!chrome?.runtime?.sendMessage) {
-    return;
-  }
-  chrome.runtime.sendMessage({
-    type: "openPaywall",
-    mode: "paywall",
-    resolveEvent: "signed-in",
-  });
-}
-
 async function handlePaywallAudioError(response) {
   if (response.status === 401) {
-    openPaywallFromContent();
     throw new Error("Unauthorized");
   }
   if (response.status === 402) {
-    openPaywallFromContent();
     throw new Error("Not enough tokens");
   }
   throw new Error("AI voice request failed.");

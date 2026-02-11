@@ -10,7 +10,6 @@ const authStatusEl = document.getElementById("authStatus");
 const authButton = document.getElementById("authButton");
 const upgradeButton = document.getElementById("upgradeButton");
 const portalButton = document.getElementById("portalButton");
-const supportButton = document.getElementById("supportButton");
 const trialInfoEl = document.getElementById("trialInfo");
 const tokenInfo = document.getElementById("tokenInfo");
 
@@ -127,7 +126,6 @@ function updateAuthUI() {
     authButton.classList.add("hidden");
     upgradeButton.classList.add("hidden");
     portalButton.classList.add("hidden");
-    supportButton.classList.add("hidden");
     trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
@@ -138,7 +136,6 @@ function updateAuthUI() {
     authButton.classList.add("hidden");
     upgradeButton.classList.add("hidden");
     portalButton.classList.add("hidden");
-    supportButton.classList.remove("hidden");
     trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
@@ -149,7 +146,6 @@ function updateAuthUI() {
     authButton.classList.add("hidden");
     upgradeButton.classList.remove("hidden");
     portalButton.classList.add("hidden");
-    supportButton.classList.remove("hidden");
     if (trialInfoText) {
       trialInfoEl.textContent = trialInfoText;
       trialInfoEl.classList.remove("hidden");
@@ -167,7 +163,6 @@ function updateAuthUI() {
     authButton.classList.toggle("hidden", trialActive);
     upgradeButton.classList.toggle("hidden", trialActive);
     portalButton.classList.toggle("hidden", trialActive);
-    supportButton.classList.remove("hidden");
     if (trialInfoText) {
       trialInfoEl.textContent = trialInfoText;
       trialInfoEl.classList.remove("hidden");
@@ -191,8 +186,6 @@ function updateAuthUI() {
   }
 
   portalButton.classList.toggle("hidden", trialActive);
-  supportButton.classList.remove("hidden");
-
   if (paid && typeof tokens === "number") {
     tokenInfo.textContent = `Minutes left: ${tokens}`;
     tokenInfo.classList.remove("hidden");
@@ -325,29 +318,7 @@ async function refreshAuth() {
   updateAuthUI();
 }
 
-function openBillingTab(params = {}) {
-  if (!chrome?.tabs?.create) {
-    return false;
-  }
-  try {
-    const url = new URL(chrome.runtime.getURL("paywall.html"));
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === null || value === undefined || value === "") {
-        return;
-      }
-      url.searchParams.set(key, value);
-    });
-    chrome.tabs.create({ url: url.toString() });
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
 async function openPaywall() {
-  if (openBillingTab({ mode: "paywall", resolveEvent: "signed-in" })) {
-    return;
-  }
   if (!window.paywall?.open) {
     return;
   }
@@ -360,9 +331,6 @@ async function openPaywall() {
 }
 
 async function openPortal(section) {
-  if (openBillingTab({ mode: "portal", section })) {
-    return;
-  }
   if (!window.paywall) {
     return;
   }
@@ -1273,9 +1241,6 @@ portalButton.addEventListener("click", () => {
   openPortal("portal");
 });
 
-supportButton.addEventListener("click", () => {
-  openPortal("support");
-});
 
 fileInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0];
