@@ -599,107 +599,55 @@ async function startReading() {
     setStatus("error", "AI voice is not configured.");
     return;
   }
-  if (isAiMode()) {
-    await startAiReading();
-    return;
-  }
-  if (state.status === "reading") {
-    return;
-  }
-  if (state.status === "paused") {
-    resumeReading();
-    return;
-  }
-
-  if (!textChunks.length) {
-    setStatus("loading", "Loading PDF text...");
-    const ready = await prepareText();
-    if (!ready || !textChunks.length) {
-      return;
-    }
-  }
-
-  if (state.status === "finished" || state.status === "idle") {
-    currentChunkIndex = 0;
-  }
-
-  cancelSpeech();
-  state.currentChunk = currentChunkIndex + 1;
-  setStatus("reading", "");
-  speakCurrentChunk();
+  await startAiReading();
 }
 
 function pauseReading() {
-  if (isAiMode()) {
-    pauseAiReading();
+  if (!isAiAvailable()) {
+    setStatus("error", "AI voice is not configured.");
     return;
   }
-  if (state.status !== "reading") {
-    return;
-  }
-  speechSynthesis.pause();
-  setStatus("paused", "");
+  pauseAiReading();
 }
 
 function resumeReading() {
-  if (isAiMode()) {
-    resumeAiReading();
+  if (!isAiAvailable()) {
+    setStatus("error", "AI voice is not configured.");
     return;
   }
-  if (state.status !== "paused") {
-    return;
-  }
-  setStatus("reading", "");
-  if (restartOnResume) {
-    restartOnResume = false;
-    cancelSpeech();
-    speakCurrentChunk();
-    return;
-  }
-  speechSynthesis.resume();
+  resumeAiReading();
 }
 
 function stopReading() {
-  if (isAiMode()) {
-    stopAiReading();
+  if (!isAiAvailable()) {
+    setStatus("error", "AI voice is not configured.");
     return;
   }
-  cancelSpeech();
-  currentChunkIndex = 0;
-  state.currentChunk = 0;
-  setStatus("idle", "");
+  stopAiReading();
 }
 
 function setSpeed(speed) {
   if (!Number.isFinite(speed)) {
     return;
   }
-  state.speed = speed;
-  if (isAiMode()) {
-    if (aiAudio) {
-      aiAudio.playbackRate =
-        aiCurrentBaseSpeed > 0 ? state.speed / aiCurrentBaseSpeed : 1;
-    }
-    if (aiPrefetchController) {
-      aiPrefetchController.abort();
-      aiPrefetchController = null;
-      aiPrefetch = null;
-    }
-    if (state.status === "reading") {
-      startAiPrefetch(currentChunkIndex + 1);
-    }
-    if (state.status === "paused") {
-      aiRestartOnResume = false;
-    }
-    sendStateUpdate();
+  if (!isAiAvailable()) {
     return;
+  }
+  state.speed = speed;
+  if (aiAudio) {
+    aiAudio.playbackRate =
+      aiCurrentBaseSpeed > 0 ? state.speed / aiCurrentBaseSpeed : 1;
+  }
+  if (aiPrefetchController) {
+    aiPrefetchController.abort();
+    aiPrefetchController = null;
+    aiPrefetch = null;
   }
   if (state.status === "reading") {
-    sendStateUpdate();
-    return;
+    startAiPrefetch(currentChunkIndex + 1);
   }
   if (state.status === "paused") {
-    restartOnResume = true;
+    aiRestartOnResume = false;
   }
   sendStateUpdate();
 }
