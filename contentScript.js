@@ -117,12 +117,16 @@ async function fetchAiAudio(text, language, speed, controller) {
     response_format: "mp3",
   };
   if (isPaywallRequestAvailable()) {
-    const response = await window.paywall.makeRequest(AI_PAYWALL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: usedController.signal,
-    });
+    const response = await window.paywall.makeRequest(
+      AI_PAYWALL_URL,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: usedController.signal,
+      },
+      usedController
+    );
     if (!response.ok) {
       await handlePaywallAudioError(response);
     }
