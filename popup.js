@@ -16,6 +16,7 @@ const tokenInfo = document.getElementById("tokenInfo");
 
 const AI_CONFIG = window.PDF_TTS_CONFIG || {};
 const AI_TTS_ENDPOINT = AI_CONFIG.aiEndpoint || "";
+const AI_PAYWALL_URL = AI_CONFIG.aiPaywallUrl || "";
 const AI_DEFAULT_VOICE = AI_CONFIG.aiDefaultVoice || "alloy";
 
 const STATUS_LABELS = {
@@ -77,6 +78,10 @@ function setMode(nextMode) {
 
 function isPaywallAvailable() {
   return typeof window.paywall?.getUser === "function";
+}
+
+function isPaywallRequestAvailable() {
+  return Boolean(AI_PAYWALL_URL && typeof window.paywall?.makeRequest === "function");
 }
 
 function isUnauthorizedError(error) {
@@ -410,7 +415,7 @@ async function ensureAccess() {
   return false;
 }
 function isAiAvailable() {
-  return Boolean(AI_TTS_ENDPOINT);
+  return Boolean(AI_TTS_ENDPOINT || isPaywallRequestAvailable());
 }
 
 function updateUI(state, nextMode = mode) {
@@ -715,24 +720,57 @@ async function extractPdfTextFromBuffer(buffer) {
   return { pages, totalPages: pdf.numPages };
 }
 
+async function handlePaywallAudioError(response) {
+  if (response.status === 401) {
+    await openPaywall();
+    throw new Error("Unauthorized");
+  }
+  if (response.status === 402) {
+    if (typeof window.paywall?.renew === "function") {
+      try {
+        await window.paywall.renew();
+      } catch (error) {
+        await openPaywall();
+      }
+    } else {
+      await openPaywall();
+    }
+    throw new Error("Not enough tokens");
+  }
+  throw new Error("AI voice request failed.");
+}
+
 async function fetchAiAudio(text, language, speed, controller) {
-  if (!AI_TTS_ENDPOINT) {
+  if (!AI_TTS_ENDPOINT && !isPaywallRequestAvailable()) {
     throw new Error("AI voice is not configured.");
   }
   const usedController = controller || new AbortController();
   if (!controller) {
     localAiAbortController = usedController;
   }
+  const payload = {
+    input: text,
+    text,
+    speed,
+    voice: AI_DEFAULT_VOICE,
+    response_format: "mp3",
+  };
+  if (isPaywallRequestAvailable()) {
+    const response = await window.paywall.makeRequest(AI_PAYWALL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: usedController.signal,
+    });
+    if (!response.ok) {
+      await handlePaywallAudioError(response);
+    }
+    return response.blob();
+  }
   const response = await fetch(AI_TTS_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      input: text,
-      text,
-      speed,
-      voice: AI_DEFAULT_VOICE,
-      response_format: "mp3",
-    }),
+    body: JSON.stringify(payload),
     signal: usedController.signal,
   });
   if (!response.ok) {

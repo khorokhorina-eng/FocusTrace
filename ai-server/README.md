@@ -42,6 +42,8 @@ Edit `config.js` in the extension root:
 ```js
 window.PDF_TTS_CONFIG = {
   aiEndpoint: "http://localhost:8787/tts",
+  // Optional: Monetize API provider URL for paywall.makeRequest.
+  // aiPaywallUrl: "https://onlineapp.pro/api/v1/api-gateway/999?paywall_id=100",
   aiEnabledByDefault: false,
   aiDefaultVoice: "alloy",
 };
