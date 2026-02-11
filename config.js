@@ -1,6 +1,6 @@
 window.PDF_TTS_CONFIG = {
   // Set to your proxy server, e.g. http://localhost:8787/tts
-  aiEndpoint: "",
+  aiEndpoint: "http://localhost:8787/tts",
   // Optional: Monetize API provider URL for paywall.makeRequest.
   aiPaywallUrl: "",
   // Optional: set true to default to AI voice when available.
