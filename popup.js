@@ -265,7 +265,29 @@ async function refreshAuth() {
   updateAuthUI();
 }
 
+function openBillingTab(params = {}) {
+  if (!chrome?.tabs?.create) {
+    return false;
+  }
+  try {
+    const url = new URL(chrome.runtime.getURL("paywall.html"));
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === null || value === undefined || value === "") {
+        return;
+      }
+      url.searchParams.set(key, value);
+    });
+    chrome.tabs.create({ url: url.toString() });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function openPaywall() {
+  if (openBillingTab({ mode: "paywall", resolveEvent: "signed-in" })) {
+    return;
+  }
   if (!window.paywall?.open) {
     return;
   }
@@ -278,6 +300,9 @@ async function openPaywall() {
 }
 
 async function openPortal(section) {
+  if (openBillingTab({ mode: "portal", section })) {
+    return;
+  }
   if (!window.paywall) {
     return;
   }
