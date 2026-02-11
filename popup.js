@@ -9,6 +9,9 @@ const fileInput = document.getElementById("fileInput");
 const authStatusEl = document.getElementById("authStatus");
 const authButton = document.getElementById("authButton");
 const upgradeButton = document.getElementById("upgradeButton");
+const portalButton = document.getElementById("portalButton");
+const supportButton = document.getElementById("supportButton");
+const trialInfoEl = document.getElementById("trialInfo");
 const tokenInfo = document.getElementById("tokenInfo");
 
 const AI_CONFIG = window.PDF_TTS_CONFIG || {};
@@ -59,6 +62,7 @@ let authState = {
   paid: false,
   tokens: null,
   trial: null,
+  trialInfoText: null,
 };
 
 function setMode(nextMode) {
@@ -75,11 +79,14 @@ function isPaywallAvailable() {
 }
 
 function updateAuthUI() {
-  const { status, authenticated, paid, tokens, trial } = authState;
+  const { status, authenticated, paid, tokens, trial, trialInfoText } = authState;
   if (!isPaywallAvailable()) {
     authStatusEl.textContent = "Paywall not configured.";
     authButton.classList.add("hidden");
     upgradeButton.classList.add("hidden");
+    portalButton.classList.add("hidden");
+    supportButton.classList.add("hidden");
+    trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -88,6 +95,9 @@ function updateAuthUI() {
     authStatusEl.textContent = "Checking access...";
     authButton.classList.add("hidden");
     upgradeButton.classList.add("hidden");
+    portalButton.classList.remove("hidden");
+    supportButton.classList.remove("hidden");
+    trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -96,6 +106,14 @@ function updateAuthUI() {
     authStatusEl.textContent = "Sign in to continue.";
     authButton.classList.remove("hidden");
     upgradeButton.classList.add("hidden");
+    portalButton.classList.remove("hidden");
+    supportButton.classList.remove("hidden");
+    if (trialInfoText) {
+      trialInfoEl.textContent = trialInfoText;
+      trialInfoEl.classList.remove("hidden");
+    } else {
+      trialInfoEl.classList.add("hidden");
+    }
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -110,11 +128,69 @@ function updateAuthUI() {
     upgradeButton.classList.remove("hidden");
   }
 
+  portalButton.classList.remove("hidden");
+  supportButton.classList.remove("hidden");
+
   if (typeof tokens === "number") {
-    tokenInfo.textContent = `Remaining tokens: ${tokens}`;
+    tokenInfo.textContent = `Minutes left: ${tokens}`;
     tokenInfo.classList.remove("hidden");
   } else {
     tokenInfo.classList.add("hidden");
+  }
+
+  if (trialInfoText) {
+    trialInfoEl.textContent = trialInfoText;
+    trialInfoEl.classList.remove("hidden");
+  } else {
+    trialInfoEl.classList.add("hidden");
+  }
+}
+
+function formatTrialInfo(trialInfo) {
+  if (!trialInfo || trialInfo === "no trial") {
+    return null;
+  }
+  if (typeof trialInfo.remainingActions === "number") {
+    if (trialInfo.expired) {
+      return "Trial used up.";
+    }
+    return `Trial minutes left: ${trialInfo.remainingActions}`;
+  }
+  if (typeof trialInfo.expirationEnd === "number") {
+    const remainingMs = trialInfo.expirationEnd - Date.now();
+    if (remainingMs <= 0 || trialInfo.expired) {
+      return "Trial expired.";
+    }
+    const hours = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60)));
+    return `Trial ends in ${hours} hours.`;
+  }
+  return null;
+}
+
+function formatUserTrial(trial) {
+  if (!trial?.expiresAt) {
+    return null;
+  }
+  const expiresAt = Date.parse(trial.expiresAt);
+  if (!Number.isFinite(expiresAt)) {
+    return null;
+  }
+  const remainingMs = expiresAt - Date.now();
+  if (remainingMs <= 0) {
+    return "Trial expired.";
+  }
+  const hours = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60)));
+  return `Trial ends in ${hours} hours.`;
+}
+
+async function safeGetTrialInfo() {
+  if (typeof window.paywall?.getTrialInfo !== "function") {
+    return null;
+  }
+  try {
+    return await window.paywall.getTrialInfo();
+  } catch (error) {
+    return null;
   }
 }
 
@@ -126,12 +202,15 @@ async function refreshAuth() {
       paid: false,
       tokens: null,
       trial: null,
+      trialInfoText: null,
     };
     updateAuthUI();
     return;
   }
   authState.status = "loading";
   updateAuthUI();
+  const trialInfo = await safeGetTrialInfo();
+  const trialInfoText = formatTrialInfo(trialInfo);
   try {
     const info = await window.paywall.getUser();
     const standardTokens = info.balances?.find(
@@ -146,6 +225,7 @@ async function refreshAuth() {
           ? standardTokens.count
           : null,
       trial: info.trial || null,
+      trialInfoText: formatUserTrial(info.trial) || trialInfoText,
     };
   } catch (error) {
     authState = {
@@ -154,6 +234,7 @@ async function refreshAuth() {
       paid: false,
       tokens: null,
       trial: null,
+      trialInfoText,
     };
   }
   updateAuthUI();
@@ -169,6 +250,35 @@ async function openPaywall() {
     // ignore
   }
   await refreshAuth();
+}
+
+async function openPortal(section) {
+  if (!window.paywall) {
+    return;
+  }
+  if (typeof window.paywall.openPortal === "function") {
+    try {
+      await window.paywall.openPortal({ section });
+      return;
+    } catch (error) {
+      // ignore
+    }
+  }
+  if (typeof window.paywall.open === "function") {
+    try {
+      await window.paywall.open({ view: section, section });
+      return;
+    } catch (error) {
+      // ignore
+    }
+    try {
+      await window.paywall.open({ mode: "portal", section });
+      return;
+    } catch (error) {
+      // ignore
+    }
+    await window.paywall.open();
+  }
 }
 
 async function ensureAccess() {
@@ -1007,6 +1117,14 @@ authButton.addEventListener("click", () => {
 
 upgradeButton.addEventListener("click", () => {
   openPaywall();
+});
+
+portalButton.addEventListener("click", () => {
+  openPortal("portal");
+});
+
+supportButton.addEventListener("click", () => {
+  openPortal("support");
 });
 
 fileInput.addEventListener("change", (event) => {
