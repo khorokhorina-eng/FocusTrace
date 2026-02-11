@@ -63,6 +63,7 @@ let authState = {
   tokens: null,
   trial: null,
   trialInfoText: null,
+  trialActive: false,
 };
 
 function setMode(nextMode) {
@@ -79,7 +80,15 @@ function isPaywallAvailable() {
 }
 
 function updateAuthUI() {
-  const { status, authenticated, paid, tokens, trial, trialInfoText } = authState;
+  const {
+    status,
+    authenticated,
+    paid,
+    tokens,
+    trial,
+    trialInfoText,
+    trialActive,
+  } = authState;
   if (!isPaywallAvailable()) {
     authStatusEl.textContent = "Paywall not configured.";
     authButton.classList.add("hidden");
@@ -95,7 +104,7 @@ function updateAuthUI() {
     authStatusEl.textContent = "Checking access...";
     authButton.classList.add("hidden");
     upgradeButton.classList.add("hidden");
-    portalButton.classList.remove("hidden");
+    portalButton.classList.add("hidden");
     supportButton.classList.remove("hidden");
     trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
@@ -103,10 +112,12 @@ function updateAuthUI() {
   }
 
   if (!authenticated) {
-    authStatusEl.textContent = "Sign in to continue.";
-    authButton.classList.remove("hidden");
-    upgradeButton.classList.add("hidden");
-    portalButton.classList.remove("hidden");
+    authStatusEl.textContent = trialActive
+      ? "Trial available."
+      : "Sign in to continue.";
+    authButton.classList.toggle("hidden", trialActive);
+    upgradeButton.classList.toggle("hidden", trialActive);
+    portalButton.classList.toggle("hidden", trialActive);
     supportButton.classList.remove("hidden");
     if (trialInfoText) {
       trialInfoEl.textContent = trialInfoText;
@@ -123,15 +134,17 @@ function updateAuthUI() {
     authButton.classList.add("hidden");
     upgradeButton.classList.add("hidden");
   } else {
-    authStatusEl.textContent = trial ? "Trial active." : "No active subscription.";
+    authStatusEl.textContent = trialActive
+      ? "Trial active."
+      : "No active subscription.";
     authButton.classList.add("hidden");
-    upgradeButton.classList.remove("hidden");
+    upgradeButton.classList.toggle("hidden", trialActive);
   }
 
-  portalButton.classList.remove("hidden");
+  portalButton.classList.toggle("hidden", trialActive);
   supportButton.classList.remove("hidden");
 
-  if (typeof tokens === "number") {
+  if (paid && typeof tokens === "number") {
     tokenInfo.textContent = `Minutes left: ${tokens}`;
     tokenInfo.classList.remove("hidden");
   } else {
@@ -148,39 +161,42 @@ function updateAuthUI() {
 
 function formatTrialInfo(trialInfo) {
   if (!trialInfo || trialInfo === "no trial") {
-    return null;
+    return { text: null, active: false };
   }
   if (typeof trialInfo.remainingActions === "number") {
     if (trialInfo.expired) {
-      return "Trial used up.";
+      return { text: "Trial used up.", active: false };
     }
-    return `Trial minutes left: ${trialInfo.remainingActions}`;
+    return {
+      text: `Trial minutes left: ${trialInfo.remainingActions}`,
+      active: trialInfo.remainingActions > 0,
+    };
   }
   if (typeof trialInfo.expirationEnd === "number") {
     const remainingMs = trialInfo.expirationEnd - Date.now();
     if (remainingMs <= 0 || trialInfo.expired) {
-      return "Trial expired.";
+      return { text: "Trial expired.", active: false };
     }
     const hours = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60)));
-    return `Trial ends in ${hours} hours.`;
+    return { text: `Trial ends in ${hours} hours.`, active: true };
   }
-  return null;
+  return { text: null, active: false };
 }
 
 function formatUserTrial(trial) {
   if (!trial?.expiresAt) {
-    return null;
+    return { text: null, active: false };
   }
   const expiresAt = Date.parse(trial.expiresAt);
   if (!Number.isFinite(expiresAt)) {
-    return null;
+    return { text: null, active: false };
   }
   const remainingMs = expiresAt - Date.now();
   if (remainingMs <= 0) {
-    return "Trial expired.";
+    return { text: "Trial expired.", active: false };
   }
   const hours = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60)));
-  return `Trial ends in ${hours} hours.`;
+  return { text: `Trial ends in ${hours} hours.`, active: true };
 }
 
 async function safeGetTrialInfo() {
@@ -203,6 +219,7 @@ async function refreshAuth() {
       tokens: null,
       trial: null,
       trialInfoText: null,
+      trialActive: false,
     };
     updateAuthUI();
     return;
@@ -210,22 +227,29 @@ async function refreshAuth() {
   authState.status = "loading";
   updateAuthUI();
   const trialInfo = await safeGetTrialInfo();
-  const trialInfoText = formatTrialInfo(trialInfo);
+  const trialInfoData = formatTrialInfo(trialInfo);
   try {
     const info = await window.paywall.getUser();
     const standardTokens = info.balances?.find(
       (balance) => balance.type === "standard"
     );
+    const userTrialData = formatUserTrial(info.trial);
+    const paid = Boolean(info.paid);
+    const trialActive = !paid
+      ? Boolean(userTrialData.active || trialInfoData.active)
+      : false;
+    const trialText = !paid ? userTrialData.text || trialInfoData.text : null;
     authState = {
       status: "ready",
       authenticated: true,
-      paid: Boolean(info.paid),
+      paid,
       tokens:
         typeof standardTokens?.count === "number"
           ? standardTokens.count
           : null,
       trial: info.trial || null,
-      trialInfoText: formatUserTrial(info.trial) || trialInfoText,
+      trialInfoText: trialText,
+      trialActive,
     };
   } catch (error) {
     authState = {
@@ -234,7 +258,8 @@ async function refreshAuth() {
       paid: false,
       tokens: null,
       trial: null,
-      trialInfoText,
+      trialInfoText: trialInfoData.text,
+      trialActive: Boolean(trialInfoData.active),
     };
   }
   updateAuthUI();
@@ -287,6 +312,9 @@ async function ensureAccess() {
   }
   if (authState.status === "unknown") {
     await refreshAuth();
+  }
+  if (authState.trialActive) {
+    return true;
   }
   if (!authState.authenticated) {
     await openPaywall();
