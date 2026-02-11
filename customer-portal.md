@@ -1,10 +1,5 @@
 # Customer Portal
 
-Server Mode Paywalls: This documentation is for client mode paywalls only. If
-your paywall is configured in server mode, you will need to use the
-server-side SDK to generate customer portal links. See the Server-Side Customer
-Portal documentation.
-
 Learn how to provide users with a self-service portal where they can manage
 their subscriptions, update payment methods, view billing history, and control
 their account settings.
@@ -18,6 +13,8 @@ The customer portal is a secure, hosted page that allows your subscribers to:
 - View billing history - Access invoices and payment records
 - Download receipts - Get proof of payment for tax purposes
 - Manage account details - Update personal information
+
+Customer portal
 
 ## How to Access Customer Portal
 

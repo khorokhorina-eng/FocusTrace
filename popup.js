@@ -418,6 +418,11 @@ function updateUI(state, nextMode = mode) {
   pauseBtn.disabled = !(state.status === "reading" || state.status === "paused");
   stopBtn.disabled = !(state.status === "reading" || state.status === "paused");
   speedSelect.disabled = state.status === "loading";
+  if (!isAiAvailable()) {
+    playBtn.disabled = true;
+    pauseBtn.disabled = true;
+    stopBtn.disabled = true;
+  }
 }
 
 function setLocalStatus(status, message = "") {
@@ -1056,73 +1061,42 @@ function stopLocalAiReading() {
 }
 
 function startLocalReading() {
-  if (aiEnabled) {
-    startLocalAiReading();
+  if (!isAiAvailable()) {
+    setLocalStatus("error", "AI voice is not configured.");
     return;
   }
-  if (localState.status === "reading") {
-    return;
-  }
-  if (localState.status === "paused") {
-    resumeLocalReading();
-    return;
-  }
-  if (!localChunks.length) {
-    localState.message = "Select a PDF file to start.";
-    updateUI(localState, "local");
-    fileInput.click();
-    return;
-  }
-  if (localState.status === "finished" || localState.status === "idle") {
-    localChunkIndex = 0;
-  }
-  cancelLocalSpeech();
-  setLocalStatus("reading", "");
-  speakLocalChunk();
+  startLocalAiReading();
 }
 
 function pauseLocalReading() {
-  if (aiEnabled) {
-    pauseLocalAiReading();
+  if (!isAiAvailable()) {
+    setLocalStatus("error", "AI voice is not configured.");
     return;
   }
-  if (localState.status !== "reading") {
-    return;
-  }
-  speechSynthesis.pause();
-  setLocalStatus("paused", "");
+  pauseLocalAiReading();
 }
 
 function resumeLocalReading() {
-  if (aiEnabled) {
-    resumeLocalAiReading();
+  if (!isAiAvailable()) {
+    setLocalStatus("error", "AI voice is not configured.");
     return;
   }
-  if (localState.status !== "paused") {
-    return;
-  }
-  setLocalStatus("reading", "");
-  if (localRestartOnResume) {
-    localRestartOnResume = false;
-    cancelLocalSpeech();
-    speakLocalChunk();
-    return;
-  }
-  speechSynthesis.resume();
+  resumeLocalAiReading();
 }
 
 function stopLocalReading() {
-  if (aiEnabled) {
-    stopLocalAiReading();
+  if (!isAiAvailable()) {
+    setLocalStatus("error", "AI voice is not configured.");
     return;
   }
-  cancelLocalSpeech();
-  localChunkIndex = 0;
-  setLocalStatus("idle", localState.message);
+  stopLocalAiReading();
 }
 
 function setLocalSpeed(speed) {
   if (!Number.isFinite(speed)) {
+    return;
+  }
+  if (!isAiAvailable()) {
     return;
   }
   localState.speed = speed;
@@ -1168,6 +1142,11 @@ async function handleTabAction(message) {
 }
 
 playBtn.addEventListener("click", async () => {
+  if (!isAiAvailable()) {
+    statusEl.textContent = "AI voice is not configured.";
+    hintEl.textContent = "Set aiEndpoint or aiPaywallUrl in config.js.";
+    return;
+  }
   const hasAccess = await ensureAccess();
   if (!hasAccess) {
     return;

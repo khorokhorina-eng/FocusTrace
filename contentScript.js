@@ -6,7 +6,7 @@ const state = {
   totalChunks: 0,
   currentChunk: 0,
   language: "",
-  ttsMode: "system",
+  ttsMode: "ai",
   aiAvailable: false,
 };
 
@@ -24,9 +24,6 @@ function isAiAvailable() {
 }
 
 state.aiAvailable = isAiAvailable();
-if (AI_CONFIG.aiEnabledByDefault && state.aiAvailable) {
-  state.ttsMode = "ai";
-}
 
 let textChunks = [];
 let currentChunkIndex = 0;
@@ -598,6 +595,10 @@ function stopAiReading() {
 }
 
 async function startReading() {
+  if (!isAiAvailable()) {
+    setStatus("error", "AI voice is not configured.");
+    return;
+  }
   if (isAiMode()) {
     await startAiReading();
     return;
@@ -744,8 +745,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "setTtsMode") {
-    const nextMode = message.mode === "ai" ? "ai" : "system";
-    if (nextMode === "ai" && !isAiAvailable()) {
+    const nextMode = "ai";
+    if (!isAiAvailable()) {
       setStatus("error", "AI voice is not configured.");
       sendResponse({ state });
       return false;
