@@ -79,6 +79,34 @@ function isPaywallAvailable() {
   return typeof window.paywall?.getUser === "function";
 }
 
+function isUnauthorizedError(error) {
+  if (!error) {
+    return false;
+  }
+  const message = String(error.message || "");
+  if (message.includes("401")) {
+    return true;
+  }
+  if (message.toLowerCase().includes("unauthorized")) {
+    return true;
+  }
+  const status = error.status || error.statusCode || error?.response?.status;
+  return status === 401;
+}
+
+async function safeGetUser() {
+  try {
+    const info = await window.paywall.getUser();
+    return { status: "ok", data: info };
+  } catch (error) {
+    if (isUnauthorizedError(error)) {
+      return { status: "unauthorized", error };
+    }
+    console.error("Failed to fetch user info:", error);
+    return { status: "error", error };
+  }
+}
+
 function updateAuthUI() {
   const {
     status,
@@ -107,6 +135,22 @@ function updateAuthUI() {
     portalButton.classList.add("hidden");
     supportButton.classList.remove("hidden");
     trialInfoEl.classList.add("hidden");
+    tokenInfo.classList.add("hidden");
+    return;
+  }
+
+  if (status === "error") {
+    authStatusEl.textContent = "Unable to load account.";
+    authButton.classList.add("hidden");
+    upgradeButton.classList.remove("hidden");
+    portalButton.classList.add("hidden");
+    supportButton.classList.remove("hidden");
+    if (trialInfoText) {
+      trialInfoEl.textContent = trialInfoText;
+      trialInfoEl.classList.remove("hidden");
+    } else {
+      trialInfoEl.classList.add("hidden");
+    }
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -228,8 +272,9 @@ async function refreshAuth() {
   updateAuthUI();
   const trialInfo = await safeGetTrialInfo();
   const trialInfoData = formatTrialInfo(trialInfo);
-  try {
-    const info = await window.paywall.getUser();
+  const userResult = await safeGetUser();
+  if (userResult.status === "ok") {
+    const info = userResult.data;
     const standardTokens = info.balances?.find(
       (balance) => balance.type === "standard"
     );
@@ -251,9 +296,19 @@ async function refreshAuth() {
       trialInfoText: trialText,
       trialActive,
     };
-  } catch (error) {
+  } else if (userResult.status === "unauthorized") {
     authState = {
       status: "unauthorized",
+      authenticated: false,
+      paid: false,
+      tokens: null,
+      trial: null,
+      trialInfoText: trialInfoData.text,
+      trialActive: Boolean(trialInfoData.active),
+    };
+  } else {
+    authState = {
+      status: "error",
       authenticated: false,
       paid: false,
       tokens: null,
