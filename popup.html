@@ -30,14 +30,22 @@
         <div class="account-row">
           <span id="authStatus">Checking access…</span>
           <div class="account-actions">
-            <button id="authButton" class="secondary small hidden">
-              Sign In
-            </button>
             <button id="upgradeButton" class="secondary small hidden">
               Get Access
             </button>
           </div>
         </div>
+        <label class="plan-select hidden" id="planSelectRow">
+          Plan
+          <select id="planSelect">
+            <option value="monthly">Monthly · $9.99 · 6 hours</option>
+            <option value="annual">Annual · $89.99 · 72 hours</option>
+            <option value="addon_3h">Add-on · 3 hours · $5.99</option>
+            <option value="addon_5h">Add-on · 5 hours · $8.99</option>
+            <option value="addon_10h">Add-on · 10 hours · $15.99</option>
+            <option value="addon_20h">Add-on · 20 hours · $27.99</option>
+          </select>
+        </label>
         <div class="account-links">
           <button id="portalButton" class="secondary small hidden">
             Manage subscription
@@ -49,7 +57,6 @@
       <p id="hint" class="hint">Open a PDF in Chrome to start.</p>
     </main>
     <script src="config.js"></script>
-    <script src="./wall.2.1.2.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

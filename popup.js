@@ -7,16 +7,18 @@ const speedSelect = document.getElementById("speed");
 const openFileBtn = document.getElementById("openFile");
 const fileInput = document.getElementById("fileInput");
 const authStatusEl = document.getElementById("authStatus");
-const authButton = document.getElementById("authButton");
 const upgradeButton = document.getElementById("upgradeButton");
 const portalButton = document.getElementById("portalButton");
 const trialInfoEl = document.getElementById("trialInfo");
 const tokenInfo = document.getElementById("tokenInfo");
+const planSelect = document.getElementById("planSelect");
+const planSelectRow = document.getElementById("planSelectRow");
 
-const AI_CONFIG = window.PDF_TTS_CONFIG || {};
-const AI_TTS_ENDPOINT = AI_CONFIG.aiEndpoint || "";
-const AI_PAYWALL_URL = AI_CONFIG.aiPaywallUrl || "";
-const AI_DEFAULT_VOICE = AI_CONFIG.aiDefaultVoice || "alloy";
+const API_CONFIG = window.PDF_TTS_CONFIG || {};
+const API_BASE_URL = (API_CONFIG.apiBaseUrl || "").replace(/\/$/, "");
+const AI_TTS_ENDPOINT =
+  API_CONFIG.aiEndpoint || (API_BASE_URL ? `${API_BASE_URL}/tts` : "");
+const AI_DEFAULT_VOICE = API_CONFIG.aiDefaultVoice || "alloy";
 
 const STATUS_LABELS = {
   idle: "Ready",
@@ -56,15 +58,16 @@ let localAiSkipNextEnd = false;
 let localAiPrefetch = null;
 let localAiPrefetchController = null;
 let localAiCurrentBaseSpeed = 1;
-let authState = {
+let accountState = {
   status: "unknown",
-  authenticated: false,
+  minutesLeft: null,
   paid: false,
-  tokens: null,
-  trial: null,
-  trialInfoText: null,
+  subscriptionStatus: "none",
+  plan: null,
   trialActive: false,
+  portalAvailable: false,
 };
+let deviceTokenPromise = null;
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -75,57 +78,57 @@ function setMode(nextMode) {
   }
 }
 
-function isPaywallAvailable() {
-  return typeof window.paywall?.getUser === "function";
+function isApiConfigured() {
+  return Boolean(API_BASE_URL);
 }
 
-function isPaywallRequestAvailable() {
-  return Boolean(AI_PAYWALL_URL && typeof window.paywall?.makeRequest === "function");
+function createDeviceToken() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `device_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-function isUnauthorizedError(error) {
-  if (!error) {
-    return false;
+function getDeviceToken() {
+  if (deviceTokenPromise) {
+    return deviceTokenPromise;
   }
-  const message = String(error.message || "");
-  if (message.includes("401")) {
-    return true;
-  }
-  if (message.toLowerCase().includes("unauthorized")) {
-    return true;
-  }
-  const status = error.status || error.statusCode || error?.response?.status;
-  return status === 401;
+  deviceTokenPromise = new Promise((resolve) => {
+    chrome.storage.local.get(["deviceToken"], (result) => {
+      if (result?.deviceToken) {
+        resolve(result.deviceToken);
+        return;
+      }
+      const nextToken = createDeviceToken();
+      chrome.storage.local.set({ deviceToken: nextToken }, () => {
+        resolve(nextToken);
+      });
+    });
+  });
+  return deviceTokenPromise;
 }
 
-async function safeGetUser() {
-  try {
-    const info = await window.paywall.getUser();
-    return { status: "ok", data: info };
-  } catch (error) {
-    if (isUnauthorizedError(error)) {
-      return { status: "unauthorized", error };
-    }
-    console.error("Failed to fetch user info:", error);
-    return { status: "error", error };
+async function apiFetch(path, options = {}) {
+  if (!isApiConfigured()) {
+    throw new Error("API not configured");
   }
+  const token = await getDeviceToken();
+  const url = `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  const headers = {
+    ...(options.headers || {}),
+    "x-device-token": token,
+  };
+  return fetch(url, { ...options, headers });
 }
 
-function updateAuthUI() {
-  const {
-    status,
-    authenticated,
-    paid,
-    tokens,
-    trial,
-    trialInfoText,
-    trialActive,
-  } = authState;
-  if (!isPaywallAvailable()) {
-    authStatusEl.textContent = "Paywall not configured.";
-    authButton.classList.add("hidden");
+function updateAccountUI() {
+  const { status, paid, minutesLeft, trialActive, portalAvailable } =
+    accountState;
+  if (!isApiConfigured()) {
+    authStatusEl.textContent = "Billing not configured.";
     upgradeButton.classList.add("hidden");
     portalButton.classList.add("hidden");
+    planSelectRow.classList.add("hidden");
     trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
@@ -133,9 +136,9 @@ function updateAuthUI() {
 
   if (status === "loading") {
     authStatusEl.textContent = "Checking access...";
-    authButton.classList.add("hidden");
     upgradeButton.classList.add("hidden");
     portalButton.classList.add("hidden");
+    planSelectRow.classList.add("hidden");
     trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
@@ -143,247 +146,153 @@ function updateAuthUI() {
 
   if (status === "error") {
     authStatusEl.textContent = "Unable to load account.";
-    authButton.classList.add("hidden");
     upgradeButton.classList.remove("hidden");
     portalButton.classList.add("hidden");
-    if (trialInfoText) {
-      trialInfoEl.textContent = trialInfoText;
-      trialInfoEl.classList.remove("hidden");
-    } else {
-      trialInfoEl.classList.add("hidden");
-    }
+    planSelectRow.classList.remove("hidden");
+    trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
 
-  if (!authenticated) {
-    authStatusEl.textContent = trialActive
-      ? "Trial available."
-      : "Sign in to continue.";
-    authButton.classList.toggle("hidden", trialActive);
-    upgradeButton.classList.toggle("hidden", trialActive);
-    portalButton.classList.toggle("hidden", trialActive);
-    if (trialInfoText) {
-      trialInfoEl.textContent = trialInfoText;
-      trialInfoEl.classList.remove("hidden");
-    } else {
-      trialInfoEl.classList.add("hidden");
-    }
-    tokenInfo.classList.add("hidden");
-    return;
-  }
+  authStatusEl.textContent = paid
+    ? "Subscription active."
+    : trialActive
+    ? "Trial active."
+    : "No active subscription.";
 
-  if (paid) {
-    authStatusEl.textContent = "Subscription active.";
-    authButton.classList.add("hidden");
-    upgradeButton.classList.add("hidden");
-  } else {
-    authStatusEl.textContent = trialActive
-      ? "Trial active."
-      : "No active subscription.";
-    authButton.classList.add("hidden");
-    upgradeButton.classList.toggle("hidden", trialActive);
-  }
+  upgradeButton.classList.toggle("hidden", trialActive);
+  portalButton.classList.toggle("hidden", !portalAvailable || trialActive);
+  planSelectRow.classList.toggle("hidden", trialActive);
 
-  portalButton.classList.toggle("hidden", trialActive);
-  if (paid && typeof tokens === "number") {
-    tokenInfo.textContent = `Minutes left: ${tokens}`;
+  if (paid && typeof minutesLeft === "number") {
+    tokenInfo.textContent = `Minutes left: ${minutesLeft}`;
     tokenInfo.classList.remove("hidden");
   } else {
     tokenInfo.classList.add("hidden");
   }
 
-  if (trialInfoText) {
-    trialInfoEl.textContent = trialInfoText;
+  if (trialActive && typeof minutesLeft === "number") {
+    trialInfoEl.textContent = `Trial minutes left: ${minutesLeft}`;
     trialInfoEl.classList.remove("hidden");
   } else {
     trialInfoEl.classList.add("hidden");
   }
 }
 
-function formatTrialInfo(trialInfo) {
-  if (!trialInfo || trialInfo === "no trial") {
-    return { text: null, active: false };
-  }
-  if (typeof trialInfo.remainingActions === "number") {
-    if (trialInfo.expired) {
-      return { text: "Trial used up.", active: false };
-    }
-    return {
-      text: `Trial minutes left: ${trialInfo.remainingActions}`,
-      active: trialInfo.remainingActions > 0,
-    };
-  }
-  if (typeof trialInfo.expirationEnd === "number") {
-    const remainingMs = trialInfo.expirationEnd - Date.now();
-    if (remainingMs <= 0 || trialInfo.expired) {
-      return { text: "Trial expired.", active: false };
-    }
-    const hours = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60)));
-    return { text: `Trial ends in ${hours} hours.`, active: true };
-  }
-  return { text: null, active: false };
-}
-
-function formatUserTrial(trial) {
-  if (!trial?.expiresAt) {
-    return { text: null, active: false };
-  }
-  const expiresAt = Date.parse(trial.expiresAt);
-  if (!Number.isFinite(expiresAt)) {
-    return { text: null, active: false };
-  }
-  const remainingMs = expiresAt - Date.now();
-  if (remainingMs <= 0) {
-    return { text: "Trial expired.", active: false };
-  }
-  const hours = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60)));
-  return { text: `Trial ends in ${hours} hours.`, active: true };
-}
-
-async function safeGetTrialInfo() {
-  if (typeof window.paywall?.getTrialInfo !== "function") {
-    return null;
-  }
-  try {
-    return await window.paywall.getTrialInfo();
-  } catch (error) {
-    return null;
-  }
-}
-
-async function refreshAuth() {
-  if (!isPaywallAvailable()) {
-    authState = {
+async function refreshAccount() {
+  if (!isApiConfigured()) {
+    accountState = {
       status: "unavailable",
-      authenticated: false,
+      minutesLeft: null,
       paid: false,
-      tokens: null,
-      trial: null,
-      trialInfoText: null,
+      subscriptionStatus: "none",
+      plan: null,
       trialActive: false,
+      portalAvailable: false,
     };
-    updateAuthUI();
+    updateAccountUI();
     return;
   }
-  authState.status = "loading";
-  updateAuthUI();
-  const trialInfo = await safeGetTrialInfo();
-  const trialInfoData = formatTrialInfo(trialInfo);
-  const userResult = await safeGetUser();
-  if (userResult.status === "ok") {
-    const info = userResult.data;
-    const standardTokens = info.balances?.find(
-      (balance) => balance.type === "standard"
-    );
-    const userTrialData = formatUserTrial(info.trial);
-    const paid = Boolean(info.paid);
-    const trialActive = !paid
-      ? Boolean(userTrialData.active || trialInfoData.active)
-      : false;
-    const trialText = !paid ? userTrialData.text || trialInfoData.text : null;
-    authState = {
+  accountState.status = "loading";
+  updateAccountUI();
+  try {
+    const response = await apiFetch("/me");
+    if (!response.ok) {
+      throw new Error("Account request failed");
+    }
+    const data = await response.json();
+    const minutesLeft =
+      typeof data.minutesLeft === "number" ? data.minutesLeft : null;
+    const paid = Boolean(data.paid || data.subscriptionStatus === "active");
+    const trialActive = !paid && typeof minutesLeft === "number" && minutesLeft > 0;
+    accountState = {
       status: "ready",
-      authenticated: true,
+      minutesLeft,
       paid,
-      tokens:
-        typeof standardTokens?.count === "number"
-          ? standardTokens.count
-          : null,
-      trial: info.trial || null,
-      trialInfoText: trialText,
+      subscriptionStatus: data.subscriptionStatus || "none",
+      plan: data.plan || null,
       trialActive,
+      portalAvailable: Boolean(data.portalAvailable || data.subscriptionStatus === "active"),
     };
-  } else if (userResult.status === "unauthorized") {
-    authState = {
-      status: "unauthorized",
-      authenticated: false,
-      paid: false,
-      tokens: null,
-      trial: null,
-      trialInfoText: trialInfoData.text,
-      trialActive: Boolean(trialInfoData.active),
-    };
-  } else {
-    authState = {
+  } catch (error) {
+    accountState = {
       status: "error",
-      authenticated: false,
+      minutesLeft: null,
       paid: false,
-      tokens: null,
-      trial: null,
-      trialInfoText: trialInfoData.text,
-      trialActive: Boolean(trialInfoData.active),
+      subscriptionStatus: "none",
+      plan: null,
+      trialActive: false,
+      portalAvailable: false,
     };
   }
-  updateAuthUI();
+  updateAccountUI();
 }
 
-async function openPaywall() {
-  if (!window.paywall?.open) {
+async function openCheckout(plan) {
+  if (!isApiConfigured()) {
     return;
   }
   try {
-    await window.paywall.open({ resolveEvent: "signed-in" });
+    const response = await apiFetch("/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan }),
+    });
+    if (!response.ok) {
+      throw new Error("Checkout failed");
+    }
+    const data = await response.json();
+    if (data?.url && chrome?.tabs?.create) {
+      chrome.tabs.create({ url: data.url });
+    }
   } catch (error) {
-    // ignore
+    authStatusEl.textContent = "Unable to open checkout.";
   }
-  await refreshAuth();
 }
 
-async function openPortal(section) {
-  if (!window.paywall) {
+async function openPortal() {
+  if (!isApiConfigured()) {
     return;
   }
-  if (typeof window.paywall.openPortal === "function") {
-    try {
-      await window.paywall.openPortal({ section });
-      return;
-    } catch (error) {
-      // ignore
+  try {
+    const response = await apiFetch("/portal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok) {
+      throw new Error("Portal failed");
     }
-  }
-  if (typeof window.paywall.open === "function") {
-    try {
-      await window.paywall.open({ view: section, section });
-      return;
-    } catch (error) {
-      // ignore
+    const data = await response.json();
+    if (data?.url && chrome?.tabs?.create) {
+      chrome.tabs.create({ url: data.url });
     }
-    try {
-      await window.paywall.open({ mode: "portal", section });
-      return;
-    } catch (error) {
-      // ignore
-    }
-    await window.paywall.open();
+  } catch (error) {
+    authStatusEl.textContent = "Unable to open portal.";
   }
 }
 
 async function ensureAccess() {
-  if (!isPaywallAvailable()) {
-    return true;
-  }
-  if (authState.status === "unknown") {
-    await refreshAuth();
-  }
-  if (authState.trialActive) {
-    return true;
-  }
-  if (!authState.authenticated) {
-    await openPaywall();
+  if (!isApiConfigured()) {
     return false;
   }
-  if (authState.paid) {
+  if (accountState.status === "unknown") {
+    await refreshAccount();
+  }
+  if (accountState.trialActive) {
     return true;
   }
-  if (typeof authState.tokens === "number" && authState.tokens > 0) {
+  if (accountState.paid) {
     return true;
   }
-  await openPaywall();
+  if (typeof accountState.minutesLeft === "number" && accountState.minutesLeft > 0) {
+    return true;
+  }
+  const plan = planSelect?.value || "monthly";
+  await openCheckout(plan);
   return false;
 }
 function isAiAvailable() {
-  return Boolean(AI_TTS_ENDPOINT || isPaywallRequestAvailable());
+  return Boolean(AI_TTS_ENDPOINT);
 }
 
 function updateUI(state, nextMode = mode) {
@@ -699,28 +608,8 @@ async function extractPdfTextFromBuffer(buffer) {
   return { pages, totalPages: pdf.numPages };
 }
 
-async function handlePaywallAudioError(response) {
-  if (response.status === 401) {
-    await openPaywall();
-    throw new Error("Unauthorized");
-  }
-  if (response.status === 402) {
-    if (typeof window.paywall?.renew === "function") {
-      try {
-        await window.paywall.renew();
-      } catch (error) {
-        await openPaywall();
-      }
-    } else {
-      await openPaywall();
-    }
-    throw new Error("Not enough tokens");
-  }
-  throw new Error("AI voice request failed.");
-}
-
 async function fetchAiAudio(text, language, speed, controller) {
-  if (!AI_TTS_ENDPOINT && !isPaywallRequestAvailable()) {
+  if (!AI_TTS_ENDPOINT) {
     throw new Error("AI voice is not configured.");
   }
   const usedController = controller || new AbortController();
@@ -734,29 +623,28 @@ async function fetchAiAudio(text, language, speed, controller) {
     voice: AI_DEFAULT_VOICE,
     response_format: "mp3",
   };
-  if (isPaywallRequestAvailable()) {
-    const response = await window.paywall.makeRequest(
-      AI_PAYWALL_URL,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: usedController.signal,
-      },
-      usedController
-    );
-    if (!response.ok) {
-      await handlePaywallAudioError(response);
-    }
-    return response.blob();
-  }
+  const token = await getDeviceToken();
   const response = await fetch(AI_TTS_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-device-token": token,
+    },
     body: JSON.stringify(payload),
     signal: usedController.signal,
   });
   if (!response.ok) {
+    if (response.status === 402) {
+      await refreshAccount();
+      const error = new Error("not-enough-queries");
+      error.code = "not-enough-queries";
+      throw error;
+    }
+    if (response.status === 401) {
+      const error = new Error("unauthorized");
+      error.code = "unauthorized";
+      throw error;
+    }
     throw new Error("AI voice request failed.");
   }
   return response.blob();
@@ -943,6 +831,10 @@ async function playLocalAiChunk() {
     setLocalStatus("reading", "");
     startLocalAiPrefetch(localChunkIndex + 1);
   } catch (error) {
+    if (error?.code === "not-enough-queries") {
+      setLocalStatus("error", "No minutes left. Open the extension to upgrade.");
+      return;
+    }
     setLocalStatus("error", "AI voice failed.");
   }
 }
@@ -1154,7 +1046,7 @@ async function handleTabAction(message) {
 playBtn.addEventListener("click", async () => {
   if (!isAiAvailable()) {
     statusEl.textContent = "AI voice is not configured.";
-    hintEl.textContent = "Set aiEndpoint or aiPaywallUrl in config.js.";
+    hintEl.textContent = "Set apiBaseUrl or aiEndpoint in config.js.";
     return;
   }
   const hasAccess = await ensureAccess();
@@ -1218,19 +1110,14 @@ openFileBtn.addEventListener("click", () => {
   fileInput.click();
 });
 
-authButton.addEventListener("click", () => {
-  openPaywall();
-});
-
 upgradeButton.addEventListener("click", () => {
-  openPaywall();
+  const plan = planSelect?.value || "monthly";
+  openCheckout(plan);
 });
 
 portalButton.addEventListener("click", () => {
-  openPortal("portal");
+  openPortal();
 });
-
-
 fileInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   loadLocalFile(file);
@@ -1241,6 +1128,6 @@ document.addEventListener("DOMContentLoaded", () => {
   if (!isAiAvailable()) {
     hintEl.textContent = "AI voice requires server setup.";
   }
-  refreshAuth();
+  refreshAccount();
   refreshState();
 });

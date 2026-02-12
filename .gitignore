@@ -1,2 +1,5 @@
 node_modules/
 .DS_Store
+ai-server/data/
+*.db
+.env

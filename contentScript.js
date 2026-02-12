@@ -10,17 +10,16 @@ const state = {
   aiAvailable: false,
 };
 
-const AI_CONFIG = window.PDF_TTS_CONFIG || {};
-const AI_TTS_ENDPOINT = AI_CONFIG.aiEndpoint || "";
-const AI_PAYWALL_URL = AI_CONFIG.aiPaywallUrl || "";
-const AI_DEFAULT_VOICE = AI_CONFIG.aiDefaultVoice || "alloy";
+const API_CONFIG = window.PDF_TTS_CONFIG || {};
+const API_BASE_URL = (API_CONFIG.apiBaseUrl || "").replace(/\/$/, "");
+const AI_TTS_ENDPOINT =
+  API_CONFIG.aiEndpoint || (API_BASE_URL ? `${API_BASE_URL}/tts` : "");
+const AI_DEFAULT_VOICE = API_CONFIG.aiDefaultVoice || "alloy";
 
-function isPaywallRequestAvailable() {
-  return Boolean(AI_PAYWALL_URL && typeof window.paywall?.makeRequest === "function");
-}
+let deviceTokenPromise = null;
 
 function isAiAvailable() {
-  return Boolean(AI_TTS_ENDPOINT || isPaywallRequestAvailable());
+  return Boolean(AI_TTS_ENDPOINT);
 }
 
 state.aiAvailable = isAiAvailable();
@@ -78,18 +77,34 @@ function isAiMode() {
   return state.ttsMode === "ai";
 }
 
-async function handlePaywallAudioError(response) {
-  if (response.status === 401) {
-    throw new Error("Unauthorized");
+function createDeviceToken() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
   }
-  if (response.status === 402) {
-    throw new Error("Not enough tokens");
+  return `device_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function getDeviceToken() {
+  if (deviceTokenPromise) {
+    return deviceTokenPromise;
   }
-  throw new Error("AI voice request failed.");
+  deviceTokenPromise = new Promise((resolve) => {
+    chrome.storage.local.get(["deviceToken"], (result) => {
+      if (result?.deviceToken) {
+        resolve(result.deviceToken);
+        return;
+      }
+      const nextToken = createDeviceToken();
+      chrome.storage.local.set({ deviceToken: nextToken }, () => {
+        resolve(nextToken);
+      });
+    });
+  });
+  return deviceTokenPromise;
 }
 
 async function fetchAiAudio(text, language, speed, controller) {
-  if (!AI_TTS_ENDPOINT && !isPaywallRequestAvailable()) {
+  if (!AI_TTS_ENDPOINT) {
     throw new Error("AI voice is not configured.");
   }
   const usedController = controller || new AbortController();
@@ -103,29 +118,27 @@ async function fetchAiAudio(text, language, speed, controller) {
     voice: AI_DEFAULT_VOICE,
     response_format: "mp3",
   };
-  if (isPaywallRequestAvailable()) {
-    const response = await window.paywall.makeRequest(
-      AI_PAYWALL_URL,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: usedController.signal,
-      },
-      usedController
-    );
-    if (!response.ok) {
-      await handlePaywallAudioError(response);
-    }
-    return response.blob();
-  }
+  const token = await getDeviceToken();
   const response = await fetch(AI_TTS_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-device-token": token,
+    },
     body: JSON.stringify(payload),
     signal: usedController.signal,
   });
   if (!response.ok) {
+    if (response.status === 402) {
+      const error = new Error("not-enough-queries");
+      error.code = "not-enough-queries";
+      throw error;
+    }
+    if (response.status === 401) {
+      const error = new Error("unauthorized");
+      error.code = "unauthorized";
+      throw error;
+    }
     throw new Error("AI voice request failed.");
   }
   return response.blob();
@@ -658,6 +671,10 @@ async function playAiChunk() {
     setStatus("reading", "");
     startAiPrefetch(currentChunkIndex + 1);
   } catch (error) {
+    if (error?.code === "not-enough-queries") {
+      setStatus("error", "No minutes left. Open the extension to upgrade.");
+      return;
+    }
     setStatus("error", "AI voice failed.");
   }
 }

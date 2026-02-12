@@ -1,7 +1,7 @@
-# OpenAI TTS Proxy (for the extension)
+# PDF Text to Speech API (TTS + billing)
 
-This lightweight server keeps your OpenAI API key off the client and returns
-audio for each text chunk.
+This server keeps your OpenAI API key off the client, serves TTS audio, and
+tracks user minutes plus Stripe subscriptions/add-ons.
 
 ## 1) Install
 
@@ -19,6 +19,24 @@ OPENAI_API_KEY=your_openai_api_key
 OPENAI_TTS_MODEL=gpt-4o-mini-tts
 OPENAI_TTS_VOICE=alloy
 PORT=8787
+
+# Stripe
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PRICE_MONTHLY=price_monthly_id
+STRIPE_PRICE_ANNUAL=price_annual_id
+STRIPE_PRICE_ADDON_3H=price_addon_3h
+STRIPE_PRICE_ADDON_5H=price_addon_5h
+STRIPE_PRICE_ADDON_10H=price_addon_10h
+STRIPE_PRICE_ADDON_20H=price_addon_20h
+
+# Optional
+STRIPE_SUCCESS_URL=https://pdftext2speech.com/success?session_id={CHECKOUT_SESSION_ID}
+STRIPE_CANCEL_URL=https://pdftext2speech.com/pricing
+BILLING_PORTAL_RETURN_URL=https://pdftext2speech.com/account
+FREE_MINUTES=5
+CHAR_PER_MINUTE=900
+DB_PATH=./data/tts.db
 ```
 
 The server loads `.env` automatically.
@@ -41,18 +59,28 @@ Edit `config.js` in the extension root:
 
 ```js
 window.PDF_TTS_CONFIG = {
-  aiEndpoint: "http://localhost:8787/tts",
-  // Optional: Monetize API provider URL for paywall.makeRequest.
-  // aiPaywallUrl: "https://onlineapp.pro/api/v1/api-gateway/999?paywall_id=100",
-  aiEnabledByDefault: false,
+  apiBaseUrl: "http://localhost:8787",
+  // Optional: override the TTS endpoint directly.
+  aiEndpoint: "",
+  aiEnabledByDefault: true,
   aiDefaultVoice: "alloy",
 };
 ```
 
 Then reload the extension in `chrome://extensions`.
 
+## API Endpoints
+
+- `GET /health` - health check
+- `GET /me` - returns minutes + subscription status
+- `POST /checkout` - creates Stripe Checkout session
+- `POST /portal` - creates Stripe Customer Portal session
+- `POST /tts` - returns `audio/mpeg` (deducts minutes)
+- `POST /stripe/webhook` - Stripe webhooks
+
 ## Notes
 
-- The server expects JSON: `{ text, speed, voice }`
-- The response is `audio/mpeg`
-- Add CORS if you deploy behind a reverse proxy
+- `/tts` expects JSON: `{ text, speed, voice }`
+- Pass `x-device-token` header from the extension
+- The server deducts minutes by character length (default 900 chars/minute)
+- Use HTTPS in production

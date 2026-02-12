@@ -23,8 +23,8 @@
     "file:///*.pdf",
     "file:///*.PDF",
     "http://localhost:8787/*",
-    "https://your-tts-proxy.example.com/*",
-    "https://*.monetize.software/*"
+    "https://api.pdftext2speech.com/*",
+    "https://your-tts-proxy.example.com/*"
   ],
   "content_scripts": [
     {
