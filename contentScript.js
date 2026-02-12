@@ -183,6 +183,7 @@ function splitIntoSentences(text) {
 function buildChunks(pages) {
   const chunks = [];
   const maxLength = 900;
+  const firstChunkMaxLength = 400;
 
   pages.forEach((pageText) => {
     const normalized = normalizeText(pageText);
@@ -195,7 +196,8 @@ function buildChunks(pages) {
 
     parts.forEach((sentence) => {
       const candidate = current ? `${current} ${sentence}` : sentence;
-      if (candidate.length > maxLength) {
+      const limit = chunks.length === 0 ? firstChunkMaxLength : maxLength;
+      if (candidate.length > limit) {
         if (current) {
           chunks.push(current.trim());
           current = sentence;
@@ -489,7 +491,11 @@ async function playAiChunk() {
   sendStateUpdate();
   try {
     const result = await getAiBlob(currentChunkIndex);
-    if (token !== aiPlaybackToken || !isAiMode() || state.status !== "reading") {
+    if (
+      token !== aiPlaybackToken ||
+      !isAiMode() ||
+      (state.status !== "reading" && state.status !== "loading")
+    ) {
       return;
     }
     if (!result?.blob) {
@@ -523,6 +529,7 @@ async function playAiChunk() {
       setStatus("error", "AI voice failed.");
     };
     await audio.play();
+    setStatus("reading", "");
     startAiPrefetch(currentChunkIndex + 1);
   } catch (error) {
     setStatus("error", "AI voice failed.");
@@ -553,7 +560,7 @@ async function startAiReading() {
   }
   cancelSpeech();
   stopAiPlayback();
-  setStatus("reading", "");
+  setStatus("loading", "Generating audio...");
   playAiChunk();
 }
 

@@ -560,6 +560,7 @@ function splitIntoSentences(text) {
 function buildChunks(pages) {
   const chunks = [];
   const maxLength = 900;
+  const firstChunkMaxLength = 400;
 
   pages.forEach((pageText) => {
     const normalized = normalizeText(pageText);
@@ -572,7 +573,8 @@ function buildChunks(pages) {
 
     parts.forEach((sentence) => {
       const candidate = current ? `${current} ${sentence}` : sentence;
-      if (candidate.length > maxLength) {
+      const limit = chunks.length === 0 ? firstChunkMaxLength : maxLength;
+      if (candidate.length > limit) {
         if (current) {
           chunks.push(current.trim());
           current = sentence;
@@ -897,7 +899,10 @@ async function playLocalAiChunk() {
   updateUI(localState, "local");
   try {
     const result = await getLocalAiBlob(localChunkIndex);
-    if (token !== localAiPlaybackToken || localState.status !== "reading") {
+    if (
+      token !== localAiPlaybackToken ||
+      (localState.status !== "reading" && localState.status !== "loading")
+    ) {
       return;
     }
     if (!result?.blob) {
@@ -931,6 +936,7 @@ async function playLocalAiChunk() {
       setLocalStatus("error", "AI voice failed.");
     };
     await audio.play();
+    setLocalStatus("reading", "");
     startLocalAiPrefetch(localChunkIndex + 1);
   } catch (error) {
     setLocalStatus("error", "AI voice failed.");
@@ -1018,7 +1024,7 @@ function startLocalAiReading() {
   }
   cancelLocalSpeech();
   stopLocalAiPlayback();
-  setLocalStatus("reading", "");
+  setLocalStatus("loading", "Generating audio...");
   playLocalAiChunk();
 }
 
