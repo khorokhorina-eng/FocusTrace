@@ -44,6 +44,9 @@ let aiSkipNextEnd = false;
 let aiPrefetch = null;
 let aiPrefetchController = null;
 let aiCurrentBaseSpeed = 1;
+let isPreparingRemaining = false;
+let prepareSession = 0;
+let chunkWaiters = [];
 
 async function loadPdfjs() {
   if (pdfjsModule) {
@@ -180,10 +183,11 @@ function splitIntoSentences(text) {
   return matches.map((sentence) => sentence.trim()).filter(Boolean);
 }
 
-function buildChunks(pages) {
+function buildChunks(pages, options = {}) {
   const chunks = [];
   const maxLength = 900;
   const firstChunkMaxLength = 400;
+  const useFirstChunkLimit = options.useFirstChunkLimit !== false;
 
   pages.forEach((pageText) => {
     const normalized = normalizeText(pageText);
@@ -196,7 +200,10 @@ function buildChunks(pages) {
 
     parts.forEach((sentence) => {
       const candidate = current ? `${current} ${sentence}` : sentence;
-      const limit = chunks.length === 0 ? firstChunkMaxLength : maxLength;
+      const limit =
+        chunks.length === 0 && useFirstChunkLimit
+          ? firstChunkMaxLength
+          : maxLength;
       if (candidate.length > limit) {
         if (current) {
           chunks.push(current.trim());
@@ -216,6 +223,21 @@ function buildChunks(pages) {
   });
 
   return chunks;
+}
+
+function notifyChunkWaiters() {
+  if (!chunkWaiters.length) {
+    return;
+  }
+  const waiters = chunkWaiters.slice();
+  chunkWaiters = [];
+  waiters.forEach((resolve) => resolve());
+}
+
+function waitForMoreChunks() {
+  return new Promise((resolve) => {
+    chunkWaiters.push(resolve);
+  });
 }
 
 async function detectLanguageFromText(text) {
@@ -287,33 +309,83 @@ async function prepareText() {
     return false;
   }
   isPreparing = true;
+  prepareSession += 1;
+  const sessionId = prepareSession;
+  isPreparingRemaining = false;
+  notifyChunkWaiters();
   try {
     const pdfUrl = resolvePdfUrl();
     if (!pdfUrl) {
       setStatus("error", "Active tab does not appear to be a PDF.");
       return false;
     }
-    const { pages, totalPages } = await extractPdfText(pdfUrl);
-    state.totalPages = totalPages;
-    textChunks = buildChunks(pages);
-    state.totalChunks = textChunks.length;
+    const pdfjs = await loadPdfjs();
+    if (!pdfjs?.getDocument) {
+      setStatus("error", "PDF engine not available.");
+      return false;
+    }
+    const loadingTask = pdfjs.getDocument({
+      url: pdfUrl,
+      withCredentials: true,
+    });
+    const pdf = await loadingTask.promise;
+    if (sessionId !== prepareSession) {
+      return false;
+    }
+    state.totalPages = pdf.numPages;
+    textChunks = [];
+    state.totalChunks = 0;
     state.currentChunk = 0;
 
-    if (!textChunks.length) {
+    const maxInitialPages = Math.min(3, pdf.numPages);
+    const initialPages = [];
+    let nextPageToLoad = 1;
+    let initialChunks = [];
+
+    while (nextPageToLoad <= maxInitialPages) {
+      const page = await pdf.getPage(nextPageToLoad);
+      if (sessionId !== prepareSession) {
+        return false;
+      }
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item) => item.str)
+        .filter(Boolean)
+        .join(" ");
+      initialPages.push(pageText);
+      initialChunks = buildChunks(initialPages);
+      nextPageToLoad += 1;
+      if (initialChunks.length) {
+        break;
+      }
+    }
+
+    textChunks = initialChunks;
+    state.totalChunks = textChunks.length;
+    if (textChunks.length) {
+      const sample = textChunks.slice(0, 3).join(" ").slice(0, 1000);
+      detectedLanguage = await detectLanguageFromText(sample);
+      state.language = detectedLanguage;
+      selectedVoice = pickVoiceForLanguage(detectedLanguage);
+      setStatus("idle", "");
+      if (isAiMode()) {
+        startAiPrefetch(0);
+      }
+    }
+
+    if (nextPageToLoad <= pdf.numPages) {
+      isPreparingRemaining = true;
+      prepareRemainingPages(pdf, nextPageToLoad, sessionId);
+    } else {
+      isPreparingRemaining = false;
+    }
+
+    if (!textChunks.length && !isPreparingRemaining) {
       setStatus(
         "error",
         "No selectable text found. This PDF might be scanned."
       );
       return false;
-    }
-
-    const sample = textChunks.slice(0, 3).join(" ").slice(0, 1000);
-    detectedLanguage = await detectLanguageFromText(sample);
-    state.language = detectedLanguage;
-    selectedVoice = pickVoiceForLanguage(detectedLanguage);
-    setStatus("idle", "");
-    if (isAiMode()) {
-      startAiPrefetch(0);
     }
     return true;
   } catch (error) {
@@ -323,6 +395,42 @@ async function prepareText() {
     return false;
   } finally {
     isPreparing = false;
+  }
+}
+
+async function prepareRemainingPages(pdf, startPage, sessionId) {
+  try {
+    for (let pageNumber = startPage; pageNumber <= pdf.numPages; pageNumber += 1) {
+      if (sessionId !== prepareSession) {
+        return;
+      }
+      const page = await pdf.getPage(pageNumber);
+      if (sessionId !== prepareSession) {
+        return;
+      }
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item) => item.str)
+        .filter(Boolean)
+        .join(" ");
+      const newChunks = buildChunks([pageText], {
+        useFirstChunkLimit: textChunks.length === 0,
+      });
+      if (newChunks.length) {
+        textChunks.push(...newChunks);
+        state.totalChunks = textChunks.length;
+        notifyChunkWaiters();
+        sendStateUpdate();
+      }
+    }
+  } catch (error) {
+    // ignore background extraction errors
+  } finally {
+    if (sessionId === prepareSession) {
+      isPreparingRemaining = false;
+      notifyChunkWaiters();
+      sendStateUpdate();
+    }
   }
 }
 
@@ -472,10 +580,28 @@ async function getAiBlob(index) {
 
 async function playAiChunk() {
   if (!textChunks.length) {
+    if (isPreparingRemaining) {
+      setStatus("loading", "Loading more pages...");
+      await waitForMoreChunks();
+      if (!isAiMode() || state.status === "paused") {
+        return;
+      }
+      playAiChunk();
+      return;
+    }
     setStatus("error", "No text available to read.");
     return;
   }
   if (currentChunkIndex >= textChunks.length) {
+    if (isPreparingRemaining) {
+      setStatus("loading", "Loading more pages...");
+      await waitForMoreChunks();
+      if (!isAiMode() || state.status === "paused") {
+        return;
+      }
+      playAiChunk();
+      return;
+    }
     state.currentChunk = textChunks.length;
     setStatus("finished", "");
     return;

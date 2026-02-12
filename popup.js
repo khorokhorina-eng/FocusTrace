@@ -557,10 +557,11 @@ function splitIntoSentences(text) {
   return matches.map((sentence) => sentence.trim()).filter(Boolean);
 }
 
-function buildChunks(pages) {
+function buildChunks(pages, options = {}) {
   const chunks = [];
   const maxLength = 900;
   const firstChunkMaxLength = 400;
+  const useFirstChunkLimit = options.useFirstChunkLimit !== false;
 
   pages.forEach((pageText) => {
     const normalized = normalizeText(pageText);
@@ -573,7 +574,10 @@ function buildChunks(pages) {
 
     parts.forEach((sentence) => {
       const candidate = current ? `${current} ${sentence}` : sentence;
-      const limit = chunks.length === 0 ? firstChunkMaxLength : maxLength;
+      const limit =
+        chunks.length === 0 && useFirstChunkLimit
+          ? firstChunkMaxLength
+          : maxLength;
       if (candidate.length > limit) {
         if (current) {
           chunks.push(current.trim());
