@@ -70,12 +70,105 @@ button:disabled {
   gap: 12px;
 }
 
-.plan-select {
+.account-status {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.paywall-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 16px;
+  background: #ffffff;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 13px;
+  flex-direction: column;
   gap: 12px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+.paywall-card h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.paywall-subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.plan-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.plan-option {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.plan-option.selected {
+  border-color: #f97316;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.2);
+}
+
+.plan-price {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.plan-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: #fde68a;
+  color: #92400e;
+  width: fit-content;
+}
+
+.paywall-cta {
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.addon-section {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.addon-title {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.addon-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.addon-option {
+  font-size: 11px;
+  padding: 8px;
 }
 
 .account {

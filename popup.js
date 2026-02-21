@@ -7,12 +7,14 @@ const speedSelect = document.getElementById("speed");
 const openFileBtn = document.getElementById("openFile");
 const fileInput = document.getElementById("fileInput");
 const authStatusEl = document.getElementById("authStatus");
-const upgradeButton = document.getElementById("upgradeButton");
+const paywallCard = document.getElementById("paywallCard");
+const planToggle = document.getElementById("planToggle");
+const checkoutButton = document.getElementById("checkoutButton");
+const addonSection = document.getElementById("addonSection");
+const addonOptions = Array.from(document.querySelectorAll(".addon-option"));
+const planOptions = Array.from(document.querySelectorAll(".plan-option"));
 const portalButton = document.getElementById("portalButton");
-const trialInfoEl = document.getElementById("trialInfo");
 const tokenInfo = document.getElementById("tokenInfo");
-const planSelect = document.getElementById("planSelect");
-const planSelectRow = document.getElementById("planSelectRow");
 
 const API_CONFIG = window.PDF_TTS_CONFIG || {};
 const API_BASE_URL = (API_CONFIG.apiBaseUrl || "").replace(/\/$/, "");
@@ -68,6 +70,7 @@ let accountState = {
   portalAvailable: false,
 };
 let deviceTokenPromise = null;
+let selectedPlan = "annual";
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -126,56 +129,50 @@ function updateAccountUI() {
     accountState;
   if (!isApiConfigured()) {
     authStatusEl.textContent = "Billing not configured.";
-    upgradeButton.classList.add("hidden");
+    paywallCard.classList.add("hidden");
     portalButton.classList.add("hidden");
-    planSelectRow.classList.add("hidden");
-    trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
 
   if (status === "loading") {
     authStatusEl.textContent = "Checking access...";
-    upgradeButton.classList.add("hidden");
+    paywallCard.classList.add("hidden");
     portalButton.classList.add("hidden");
-    planSelectRow.classList.add("hidden");
-    trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
 
   if (status === "error") {
     authStatusEl.textContent = "Unable to load account.";
-    upgradeButton.classList.remove("hidden");
+    paywallCard.classList.remove("hidden");
     portalButton.classList.add("hidden");
-    planSelectRow.classList.remove("hidden");
-    trialInfoEl.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
 
+  const hasMinutes = typeof minutesLeft === "number" && minutesLeft > 0;
+  const noMinutes = typeof minutesLeft === "number" && minutesLeft <= 0;
+  const showAddons = paid && noMinutes;
+  const showPaywall = !paid || showAddons;
+
   authStatusEl.textContent = paid
-    ? "Subscription active."
-    : trialActive
-    ? "Trial active."
+    ? noMinutes
+      ? "Subscription active. No minutes left."
+      : "Subscription active."
     : "No active subscription.";
 
-  upgradeButton.classList.toggle("hidden", trialActive);
-  portalButton.classList.toggle("hidden", !portalAvailable || trialActive);
-  planSelectRow.classList.toggle("hidden", trialActive);
+  paywallCard.classList.toggle("hidden", !showPaywall);
+  planToggle.classList.toggle("hidden", paid);
+  checkoutButton.classList.toggle("hidden", paid);
+  addonSection.classList.toggle("hidden", !showAddons);
+  portalButton.classList.toggle("hidden", !portalAvailable);
 
   if (paid && typeof minutesLeft === "number") {
     tokenInfo.textContent = `Minutes left: ${minutesLeft}`;
     tokenInfo.classList.remove("hidden");
   } else {
     tokenInfo.classList.add("hidden");
-  }
-
-  if (trialActive && typeof minutesLeft === "number") {
-    trialInfoEl.textContent = `Trial minutes left: ${minutesLeft}`;
-    trialInfoEl.classList.remove("hidden");
-  } else {
-    trialInfoEl.classList.add("hidden");
   }
 }
 
@@ -204,7 +201,8 @@ async function refreshAccount() {
     const minutesLeft =
       typeof data.minutesLeft === "number" ? data.minutesLeft : null;
     const paid = Boolean(data.paid || data.subscriptionStatus === "active");
-    const trialActive = !paid && typeof minutesLeft === "number" && minutesLeft > 0;
+    const trialActive =
+      !paid && typeof minutesLeft === "number" && minutesLeft > 0;
     accountState = {
       status: "ready",
       minutesLeft,
@@ -271,6 +269,13 @@ async function openPortal() {
   }
 }
 
+function setSelectedPlan(plan) {
+  selectedPlan = plan;
+  planOptions.forEach((option) => {
+    option.classList.toggle("selected", option.dataset.plan === plan);
+  });
+}
+
 async function ensureAccess() {
   if (!isApiConfigured()) {
     return false;
@@ -287,8 +292,7 @@ async function ensureAccess() {
   if (typeof accountState.minutesLeft === "number" && accountState.minutesLeft > 0) {
     return true;
   }
-  const plan = planSelect?.value || "monthly";
-  await openCheckout(plan);
+  await openCheckout(selectedPlan || "monthly");
   return false;
 }
 function isAiAvailable() {
@@ -1110,9 +1114,25 @@ openFileBtn.addEventListener("click", () => {
   fileInput.click();
 });
 
-upgradeButton.addEventListener("click", () => {
-  const plan = planSelect?.value || "monthly";
-  openCheckout(plan);
+planOptions.forEach((option) => {
+  option.addEventListener("click", () => {
+    setSelectedPlan(option.dataset.plan || "monthly");
+  });
+});
+
+if (checkoutButton) {
+  checkoutButton.addEventListener("click", () => {
+    openCheckout(selectedPlan || "monthly");
+  });
+}
+
+addonOptions.forEach((option) => {
+  option.addEventListener("click", () => {
+    const plan = option.dataset.plan;
+    if (plan) {
+      openCheckout(plan);
+    }
+  });
 });
 
 portalButton.addEventListener("click", () => {
@@ -1128,6 +1148,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (!isAiAvailable()) {
     hintEl.textContent = "AI voice requires server setup.";
   }
+  setSelectedPlan(selectedPlan);
   refreshAccount();
   refreshState();
 });

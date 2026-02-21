@@ -27,31 +27,53 @@
         </select>
       </label>
       <div id="account" class="account">
-        <div class="account-row">
-          <span id="authStatus">Checking access…</span>
-          <div class="account-actions">
-            <button id="upgradeButton" class="secondary small hidden">
-              Get Access
+        <p id="authStatus" class="account-status">Checking access...</p>
+        <div id="paywallCard" class="paywall-card hidden">
+          <h2>Unlock all features</h2>
+          <p class="paywall-subtitle">
+            Get daily updates, crafted for you. Cancel anytime.
+          </p>
+          <div id="planToggle" class="plan-toggle">
+            <button type="button" class="plan-option" data-plan="monthly">
+              <span>Monthly</span>
+              <span class="plan-price">$9.99</span>
+            </button>
+            <button
+              type="button"
+              class="plan-option selected"
+              data-plan="annual"
+            >
+              <span>Annual</span>
+              <span class="plan-badge">Most popular</span>
+              <span class="plan-price">$89.99</span>
             </button>
           </div>
+          <button id="checkoutButton" class="primary paywall-cta">
+            Subscribe
+          </button>
+          <div id="addonSection" class="addon-section hidden">
+            <p class="addon-title">Need extra hours?</p>
+            <div class="addon-grid">
+              <button type="button" class="secondary addon-option" data-plan="addon_3h">
+                3 hours · $5.99
+              </button>
+              <button type="button" class="secondary addon-option" data-plan="addon_5h">
+                5 hours · $8.99
+              </button>
+              <button type="button" class="secondary addon-option" data-plan="addon_10h">
+                10 hours · $15.99
+              </button>
+              <button type="button" class="secondary addon-option" data-plan="addon_20h">
+                20 hours · $27.99
+              </button>
+            </div>
+          </div>
         </div>
-        <label class="plan-select hidden" id="planSelectRow">
-          Plan
-          <select id="planSelect">
-            <option value="monthly">Monthly · $9.99 · 6 hours</option>
-            <option value="annual">Annual · $89.99 · 72 hours</option>
-            <option value="addon_3h">Add-on · 3 hours · $5.99</option>
-            <option value="addon_5h">Add-on · 5 hours · $8.99</option>
-            <option value="addon_10h">Add-on · 10 hours · $15.99</option>
-            <option value="addon_20h">Add-on · 20 hours · $27.99</option>
-          </select>
-        </label>
         <div class="account-links">
           <button id="portalButton" class="secondary small hidden">
             Manage subscription
           </button>
         </div>
-        <p id="trialInfo" class="hint hidden"></p>
         <p id="tokenInfo" class="hint hidden"></p>
       </div>
       <p id="hint" class="hint">Open a PDF in Chrome to start.</p>
