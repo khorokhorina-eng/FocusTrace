@@ -13,6 +13,7 @@ const checkoutButton = document.getElementById("checkoutButton");
 const addonSection = document.getElementById("addonSection");
 const addonOptions = Array.from(document.querySelectorAll(".addon-option"));
 const planOptions = Array.from(document.querySelectorAll(".plan-option"));
+const upgradeLink = document.getElementById("upgradeLink");
 const portalButton = document.getElementById("portalButton");
 const tokenInfo = document.getElementById("tokenInfo");
 
@@ -131,6 +132,7 @@ function updateAccountUI() {
     authStatusEl.textContent = "Billing not configured.";
     paywallCard.classList.add("hidden");
     portalButton.classList.add("hidden");
+    upgradeLink.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -139,6 +141,7 @@ function updateAccountUI() {
     authStatusEl.textContent = "Checking access...";
     paywallCard.classList.add("hidden");
     portalButton.classList.add("hidden");
+    upgradeLink.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -147,6 +150,7 @@ function updateAccountUI() {
     authStatusEl.textContent = "Unable to load account.";
     paywallCard.classList.remove("hidden");
     portalButton.classList.add("hidden");
+    upgradeLink.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -154,12 +158,14 @@ function updateAccountUI() {
   const hasMinutes = typeof minutesLeft === "number" && minutesLeft > 0;
   const noMinutes = typeof minutesLeft === "number" && minutesLeft <= 0;
   const showAddons = paid && noMinutes;
-  const showPaywall = !paid || showAddons;
+  const showPaywall = (!paid && !trialActive) || showAddons;
 
   authStatusEl.textContent = paid
     ? noMinutes
       ? "Subscription active. No minutes left."
       : "Subscription active."
+    : trialActive
+    ? "Trial active."
     : "No active subscription.";
 
   paywallCard.classList.toggle("hidden", !showPaywall);
@@ -167,6 +173,7 @@ function updateAccountUI() {
   checkoutButton.classList.toggle("hidden", paid);
   addonSection.classList.toggle("hidden", !showAddons);
   portalButton.classList.toggle("hidden", !portalAvailable);
+  upgradeLink.classList.toggle("hidden", !trialActive);
 
   if (paid && typeof minutesLeft === "number") {
     tokenInfo.textContent = `Minutes left: ${minutesLeft}`;
@@ -237,7 +244,17 @@ async function openCheckout(plan) {
       body: JSON.stringify({ plan }),
     });
     if (!response.ok) {
-      throw new Error("Checkout failed");
+      let message = "Unable to open checkout.";
+      try {
+        const data = await response.json();
+        if (data?.error) {
+          message = `Checkout error: ${data.error}`;
+        }
+      } catch (error) {
+        // ignore parsing
+      }
+      authStatusEl.textContent = message;
+      return;
     }
     const data = await response.json();
     if (data?.url && chrome?.tabs?.create) {
@@ -1134,6 +1151,12 @@ addonOptions.forEach((option) => {
     }
   });
 });
+
+if (upgradeLink) {
+  upgradeLink.addEventListener("click", () => {
+    openCheckout(selectedPlan || "monthly");
+  });
+}
 
 portalButton.addEventListener("click", () => {
   openPortal();

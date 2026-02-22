@@ -58,6 +58,12 @@ button:disabled {
   color: #1e293b;
 }
 
+.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: #64748b;
+}
+
 .hidden {
   display: none;
 }
