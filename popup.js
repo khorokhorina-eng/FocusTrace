@@ -25,6 +25,7 @@ const contactCancel = document.getElementById("contactCancel");
 const contactClose = document.getElementById("contactClose");
 const contactStatus = document.getElementById("contactStatus");
 const tokenInfo = document.getElementById("tokenInfo");
+const devResetTrialBtn = document.getElementById("devResetTrial");
 
 const API_CONFIG = window.PDF_TTS_CONFIG || {};
 const API_BASE_URL = (API_CONFIG.apiBaseUrl || "").replace(/\/$/, "");
@@ -84,6 +85,7 @@ let deviceTokenPromise = null;
 let selectedPlan = "annual";
 let isPaywallOpen = false;
 let isContactOpen = false;
+let resolvedApiBase = API_BASE_URL;
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -96,6 +98,35 @@ function setMode(nextMode) {
 
 function isApiConfigured() {
   return Boolean(API_BASE_URL);
+}
+
+function isLocalApiBase(baseUrl) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(baseUrl);
+}
+
+function getApiBaseCandidates() {
+  if (!API_BASE_URL) {
+    return [];
+  }
+  const candidates = [API_BASE_URL];
+  if (API_BASE_URL.includes("localhost")) {
+    candidates.push(API_BASE_URL.replace("localhost", "127.0.0.1"));
+  } else if (API_BASE_URL.includes("127.0.0.1")) {
+    candidates.push(API_BASE_URL.replace("127.0.0.1", "localhost"));
+  }
+  return Array.from(new Set(candidates));
+}
+
+function buildApiUrl(baseUrl, path) {
+  return `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function updateDevToolsVisibility() {
+  if (!devResetTrialBtn) {
+    return;
+  }
+  const shouldShow = isLocalApiBase(API_BASE_URL);
+  devResetTrialBtn.classList.toggle("hidden", !shouldShow);
 }
 
 function createDeviceToken() {
@@ -129,12 +160,27 @@ async function apiFetch(path, options = {}) {
     throw new Error("API not configured");
   }
   const token = await getDeviceToken();
-  const url = `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
   const headers = {
     ...(options.headers || {}),
     "x-device-token": token,
   };
-  return fetch(url, { ...options, headers });
+  const baseCandidates = getApiBaseCandidates();
+  const prioritizedBases = resolvedApiBase
+    ? [resolvedApiBase, ...baseCandidates.filter((base) => base !== resolvedApiBase)]
+    : baseCandidates;
+
+  let lastNetworkError = null;
+  for (const baseUrl of prioritizedBases) {
+    const url = buildApiUrl(baseUrl, path);
+    try {
+      const response = await fetch(url, { ...options, headers });
+      resolvedApiBase = baseUrl;
+      return response;
+    } catch (error) {
+      lastNetworkError = error;
+    }
+  }
+  throw lastNetworkError || new Error("API request failed");
 }
 
 function updateAccountUI() {
@@ -298,6 +344,46 @@ async function openCheckout(plan) {
         ? `Unable to open checkout: ${error.message}`
         : "Unable to open checkout.";
       billingStatus.textContent = message;
+      billingStatus.classList.remove("hidden");
+    }
+  }
+}
+
+async function resetTrialForTesting() {
+  if (!isApiConfigured()) {
+    return;
+  }
+  try {
+    const response = await apiFetch("/dev/reset-trial", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ minutes: 5 }),
+    });
+    if (!response.ok) {
+      let errorMessage = "Unable to reset test minutes.";
+      try {
+        const data = await response.json();
+        if (data?.error) {
+          errorMessage = data.error;
+        }
+      } catch (error) {
+        // ignore
+      }
+      if (billingStatus) {
+        billingStatus.textContent = errorMessage;
+        billingStatus.classList.remove("hidden");
+      }
+      return;
+    }
+    if (billingStatus) {
+      billingStatus.textContent = "Test minutes reset to 5.";
+      billingStatus.classList.remove("hidden");
+    }
+    await refreshAccount();
+  } catch (error) {
+    if (billingStatus) {
+      billingStatus.textContent =
+        "Unable to reset test minutes. Is ai-server running?";
       billingStatus.classList.remove("hidden");
     }
   }
@@ -1319,6 +1405,12 @@ if (contactSend) {
     }
   });
 }
+
+if (devResetTrialBtn) {
+  devResetTrialBtn.addEventListener("click", () => {
+    resetTrialForTesting();
+  });
+}
 fileInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   loadLocalFile(file);
@@ -1329,6 +1421,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (!isAiAvailable()) {
     hintEl.textContent = "AI voice requires server setup.";
   }
+  updateDevToolsVisibility();
   setSelectedPlan(selectedPlan);
   setPaywallOpen(false);
   setContactOpen(false);

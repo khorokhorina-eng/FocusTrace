@@ -37,6 +37,7 @@ BILLING_PORTAL_RETURN_URL=https://pdftext2speech.com/account
 FREE_MINUTES=5
 CHAR_PER_MINUTE=900
 DB_PATH=./data/tts.db
+ENABLE_DEV_ENDPOINTS=true
 
 # Support email (SMTP)
 SMTP_HOST=smtp.yourprovider.com
@@ -87,6 +88,7 @@ Then reload the extension in `chrome://extensions`.
 - `POST /support` - sends support email
 - `POST /tts` - returns `audio/mpeg` (deducts minutes)
 - `POST /stripe/webhook` - Stripe webhooks
+- `POST /dev/reset-trial` - reset current device to test minutes (dev only)
 
 ## Notes
 

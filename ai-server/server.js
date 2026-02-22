@@ -22,6 +22,10 @@ const OPENAI_TTS_MODEL = process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
 const OPENAI_TTS_VOICE = process.env.OPENAI_TTS_VOICE || "alloy";
 const CHAR_PER_MINUTE = toPositiveInt(process.env.CHAR_PER_MINUTE, 900);
 const FREE_MINUTES = toPositiveInt(process.env.FREE_MINUTES, 5);
+const ENABLE_DEV_ENDPOINTS =
+  process.env.ENABLE_DEV_ENDPOINTS === "true" ||
+  (process.env.ENABLE_DEV_ENDPOINTS !== "false" &&
+    process.env.NODE_ENV !== "production");
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
@@ -274,6 +278,37 @@ app.get("/me", (req, res) => {
     subscriptionStatus: user.subscription_status || "none",
     plan: user.plan || null,
     portalAvailable: Boolean(user.stripe_customer_id),
+  });
+});
+
+app.post("/dev/reset-trial", (req, res) => {
+  if (!ENABLE_DEV_ENDPOINTS) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  const deviceToken = getDeviceToken(req);
+  if (!deviceToken) {
+    res.status(400).json({ error: "Missing device token" });
+    return;
+  }
+
+  const minutes = toPositiveInt(req.body?.minutes, FREE_MINUTES);
+  getOrCreateUser(deviceToken);
+  updateUser(deviceToken, {
+    minutes_left: minutes,
+    has_paid: 0,
+    subscription_status: null,
+    plan: null,
+    stripe_subscription_id: null,
+  });
+  const user = getUser(deviceToken);
+  res.json({
+    ok: true,
+    minutesLeft: user?.minutes_left ?? minutes,
+    paid: false,
+    subscriptionStatus: "none",
+    plan: null,
+    devMode: true,
   });
 });
 

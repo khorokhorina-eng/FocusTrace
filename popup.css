@@ -276,6 +276,10 @@ button.small {
   font-size: 12px;
 }
 
+#devResetTrial {
+  align-self: flex-start;
+}
+
 
 select {
   padding: 6px;
