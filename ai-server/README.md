@@ -37,6 +37,15 @@ BILLING_PORTAL_RETURN_URL=https://pdftext2speech.com/account
 FREE_MINUTES=5
 CHAR_PER_MINUTE=900
 DB_PATH=./data/tts.db
+
+# Support email (SMTP)
+SMTP_HOST=smtp.yourprovider.com
+SMTP_PORT=587
+SMTP_USER=hello@pdftext2speech.com
+SMTP_PASS=your_password
+SMTP_SECURE=false
+SUPPORT_EMAIL_TO=hello@pdftext2speech.com
+SUPPORT_EMAIL_FROM=hello@pdftext2speech.com
 ```
 
 The server loads `.env` automatically.
@@ -75,6 +84,7 @@ Then reload the extension in `chrome://extensions`.
 - `GET /me` - returns minutes + subscription status
 - `POST /checkout` - creates Stripe Checkout session
 - `POST /portal` - creates Stripe Customer Portal session
+- `POST /support` - sends support email
 - `POST /tts` - returns `audio/mpeg` (deducts minutes)
 - `POST /stripe/webhook` - Stripe webhooks
 

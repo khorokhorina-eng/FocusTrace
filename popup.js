@@ -15,6 +15,13 @@ const addonOptions = Array.from(document.querySelectorAll(".addon-option"));
 const planOptions = Array.from(document.querySelectorAll(".plan-option"));
 const upgradeLink = document.getElementById("upgradeLink");
 const portalButton = document.getElementById("portalButton");
+const contactToggle = document.getElementById("contactToggle");
+const contactForm = document.getElementById("contactForm");
+const contactEmail = document.getElementById("contactEmail");
+const contactMessage = document.getElementById("contactMessage");
+const contactSend = document.getElementById("contactSend");
+const contactCancel = document.getElementById("contactCancel");
+const contactStatus = document.getElementById("contactStatus");
 const tokenInfo = document.getElementById("tokenInfo");
 
 const API_CONFIG = window.PDF_TTS_CONFIG || {};
@@ -133,6 +140,7 @@ function updateAccountUI() {
     paywallCard.classList.add("hidden");
     portalButton.classList.add("hidden");
     upgradeLink.classList.add("hidden");
+    contactToggle.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -142,6 +150,7 @@ function updateAccountUI() {
     paywallCard.classList.add("hidden");
     portalButton.classList.add("hidden");
     upgradeLink.classList.add("hidden");
+    contactToggle.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -151,6 +160,7 @@ function updateAccountUI() {
     paywallCard.classList.remove("hidden");
     portalButton.classList.add("hidden");
     upgradeLink.classList.add("hidden");
+    contactToggle.classList.remove("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -174,6 +184,7 @@ function updateAccountUI() {
   addonSection.classList.toggle("hidden", !showAddons);
   portalButton.classList.toggle("hidden", !portalAvailable);
   upgradeLink.classList.toggle("hidden", !trialActive);
+  contactToggle.classList.remove("hidden");
 
   if (paid && typeof minutesLeft === "number") {
     tokenInfo.textContent = `Minutes left: ${minutesLeft}`;
@@ -291,6 +302,26 @@ function setSelectedPlan(plan) {
   planOptions.forEach((option) => {
     option.classList.toggle("selected", option.dataset.plan === plan);
   });
+}
+
+function setContactStatus(message, isError = false) {
+  if (!contactStatus) {
+    return;
+  }
+  contactStatus.textContent = message;
+  contactStatus.classList.remove("hidden");
+  contactStatus.style.color = isError ? "#dc2626" : "#64748b";
+}
+
+function toggleContactForm(show) {
+  if (!contactForm) {
+    return;
+  }
+  contactForm.classList.toggle("hidden", !show);
+  if (!show) {
+    setContactStatus("", false);
+    contactStatus.classList.add("hidden");
+  }
 }
 
 async function ensureAccess() {
@@ -1161,6 +1192,61 @@ if (upgradeLink) {
 portalButton.addEventListener("click", () => {
   openPortal();
 });
+
+if (contactToggle) {
+  contactToggle.addEventListener("click", () => {
+    toggleContactForm(true);
+  });
+}
+
+if (contactCancel) {
+  contactCancel.addEventListener("click", () => {
+    toggleContactForm(false);
+  });
+}
+
+if (contactSend) {
+  contactSend.addEventListener("click", async () => {
+    const email = contactEmail?.value?.trim() || "";
+    const message = contactMessage?.value?.trim() || "";
+    if (!email || !email.includes("@")) {
+      setContactStatus("Enter a valid email address.", true);
+      return;
+    }
+    if (!message || message.length < 3) {
+      setContactStatus("Please enter a message.", true);
+      return;
+    }
+    contactSend.disabled = true;
+    setContactStatus("Sending...");
+    try {
+      const response = await apiFetch("/support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, message }),
+      });
+      if (!response.ok) {
+        let errorMessage = "Unable to send message.";
+        try {
+          const data = await response.json();
+          if (data?.error) {
+            errorMessage = data.error;
+          }
+        } catch (error) {
+          // ignore
+        }
+        setContactStatus(errorMessage, true);
+        return;
+      }
+      contactMessage.value = "";
+      setContactStatus("Message sent. We'll reply by email.");
+    } catch (error) {
+      setContactStatus("Unable to send message.", true);
+    } finally {
+      contactSend.disabled = false;
+    }
+  });
+}
 fileInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   loadLocalFile(file);
@@ -1172,6 +1258,7 @@ document.addEventListener("DOMContentLoaded", () => {
     hintEl.textContent = "AI voice requires server setup.";
   }
   setSelectedPlan(selectedPlan);
+  toggleContactForm(false);
   refreshAccount();
   refreshState();
 });

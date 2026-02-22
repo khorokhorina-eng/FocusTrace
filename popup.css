@@ -177,6 +177,38 @@ button:disabled {
   padding: 8px;
 }
 
+.contact-form {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.contact-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.contact-field input,
+.contact-field textarea {
+  border: 1px solid #cbd5f5;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.contact-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .account {
   display: flex;
   flex-direction: column;

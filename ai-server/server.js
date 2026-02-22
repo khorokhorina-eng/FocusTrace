@@ -5,6 +5,7 @@ const express = require("express");
 const cors = require("cors");
 const Stripe = require("stripe");
 const Database = require("better-sqlite3");
+const nodemailer = require("nodemailer");
 
 const app = express();
 const PORT = process.env.PORT || 8787;
@@ -25,6 +26,17 @@ const BILLING_PORTAL_RETURN_URL =
   process.env.BILLING_PORTAL_RETURN_URL || "https://pdftext2speech.com/account";
 
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
+
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
+const SMTP_SECURE =
+  process.env.SMTP_SECURE === "true" || SMTP_PORT === 465;
+const SUPPORT_EMAIL_TO =
+  process.env.SUPPORT_EMAIL_TO || "hello@pdftext2speech.com";
+const SUPPORT_EMAIL_FROM = process.env.SUPPORT_EMAIL_FROM || SUPPORT_EMAIL_TO;
+let mailer = null;
 
 const PRICE_CONFIG = {
   monthly: {
@@ -197,6 +209,21 @@ function getPlanByPriceId(priceId) {
   return Object.values(PRICE_CONFIG).find((plan) => plan.priceId === priceId);
 }
 
+function getMailer() {
+  if (!SMTP_HOST) {
+    return null;
+  }
+  if (!mailer) {
+    mailer = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+    });
+  }
+  return mailer;
+}
+
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
@@ -291,6 +318,45 @@ app.post("/portal", async (req, res) => {
     res.json({ url: session.url });
   } catch (error) {
     res.status(500).json({ error: "Unable to create portal session" });
+  }
+});
+
+app.post("/support", async (req, res) => {
+  const deviceToken = getDeviceToken(req);
+  if (!deviceToken) {
+    res.status(400).json({ error: "Missing device token" });
+    return;
+  }
+  const email = String(req.body?.email || "").trim();
+  const message = String(req.body?.message || "").trim();
+  if (!email || !email.includes("@")) {
+    res.status(400).json({ error: "Invalid email address" });
+    return;
+  }
+  if (!message || message.length < 3) {
+    res.status(400).json({ error: "Message is too short" });
+    return;
+  }
+  if (message.length > 4000) {
+    res.status(400).json({ error: "Message is too long" });
+    return;
+  }
+  const transport = getMailer();
+  if (!transport) {
+    res.status(503).json({ error: "Support email not configured" });
+    return;
+  }
+  try {
+    await transport.sendMail({
+      to: SUPPORT_EMAIL_TO,
+      from: SUPPORT_EMAIL_FROM,
+      replyTo: email,
+      subject: "PDF Text to Speech support request",
+      text: `From: ${email}\nDevice: ${deviceToken}\n\n${message}`,
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Unable to send support email" });
   }
 });
 

@@ -76,6 +76,33 @@
           <button id="portalButton" class="secondary small hidden">
             Manage subscription
           </button>
+          <button id="contactToggle" class="ghost small hidden">
+            Contact us
+          </button>
+        </div>
+        <div id="contactForm" class="contact-form hidden">
+          <label class="contact-field">
+            Email
+            <input
+              id="contactEmail"
+              type="email"
+              placeholder="you@email.com"
+              autocomplete="email"
+            />
+          </label>
+          <label class="contact-field">
+            Message
+            <textarea
+              id="contactMessage"
+              rows="3"
+              placeholder="How can we help?"
+            ></textarea>
+          </label>
+          <div class="contact-actions">
+            <button id="contactSend" class="primary small">Send</button>
+            <button id="contactCancel" class="ghost small">Cancel</button>
+          </div>
+          <p id="contactStatus" class="hint hidden"></p>
         </div>
         <p id="tokenInfo" class="hint hidden"></p>
       </div>
