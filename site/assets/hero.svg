@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="380" viewBox="0 0 520 380">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f255a0"/>
+      <stop offset="55%" stop-color="#8b4cf6"/>
+      <stop offset="100%" stop-color="#4a6fe8"/>
+    </linearGradient>
+  </defs>
+  <rect width="520" height="380" rx="28" fill="url(#bg)"/>
+  <rect x="160" y="86" width="200" height="220" rx="20" fill="#ffffff" opacity="0.9"/>
+  <path d="M200 110h84l30 30v128a10 10 0 0 1-10 10H200a10 10 0 0 1-10-10V120a10 10 0 0 1 10-10z" fill="#ffffff"/>
+  <path d="M284 110v34h34" fill="#f1f5f9"/>
+  <rect x="196" y="128" width="52" height="28" rx="6" fill="#f255a0"/>
+  <text x="222" y="148" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="700" text-anchor="middle" fill="#ffffff">PDF</text>
+  <polygon points="248,190 286,168 286,252 248,230" fill="#4a6fe8"/>
+  <rect x="228" y="196" width="26" height="50" rx="8" fill="#4a6fe8"/>
+  <path d="M300 198c16 18 16 38 0 56" stroke="#4a6fe8" stroke-width="8" fill="none" stroke-linecap="round"/>
+  <path d="M322 186c24 28 24 62 0 90" stroke="#4a6fe8" stroke-width="8" fill="none" stroke-linecap="round"/>
+  <text x="260" y="330" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" text-anchor="middle" fill="#ffffff">Read PDFs aloud</text>
+</svg>

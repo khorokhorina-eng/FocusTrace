@@ -1,9 +1,3 @@
-const FREE_MINUTES_LIMIT_MS = 15 * 60 * 1000;
-const STORAGE_KEYS = {
-  freeUsageMs: "freeUsageMs",
-  subscriptionActive: "subscriptionActive",
-};
-
 const state = {
   status: "idle",
   speed: 1,
@@ -12,14 +6,24 @@ const state = {
   totalChunks: 0,
   currentChunk: 0,
   language: "",
-  freeUsageMs: 0,
-  freeMinutesLeftMs: FREE_MINUTES_LIMIT_MS,
-  freeMinutesTotalMs: FREE_MINUTES_LIMIT_MS,
-  isSubscribed: false,
-  paywallRequired: false,
+  ttsMode: "ai",
+  aiAvailable: false,
 };
 
-const pdfjs = window.pdfjsLib;
+const API_CONFIG = window.PDF_TTS_CONFIG || {};
+const API_BASE_URL = (API_CONFIG.apiBaseUrl || "").replace(/\/$/, "");
+const AI_TTS_ENDPOINT =
+  API_CONFIG.aiEndpoint || (API_BASE_URL ? `${API_BASE_URL}/tts` : "");
+const AI_DEFAULT_VOICE = API_CONFIG.aiDefaultVoice || "alloy";
+
+let deviceTokenPromise = null;
+
+function isAiAvailable() {
+  return Boolean(AI_TTS_ENDPOINT);
+}
+
+state.aiAvailable = isAiAvailable();
+
 let textChunks = [];
 let currentChunkIndex = 0;
 let isPreparing = false;
@@ -28,18 +32,116 @@ let restartOnResume = false;
 let detectedLanguage = "";
 let selectedVoice = null;
 let availableVoices = [];
+let pdfjsModule = null;
+let pdfjsLoading = null;
+let aiAudio = null;
+let aiAbortController = null;
+let aiCurrentUrl = null;
+let aiPlaybackToken = 0;
+let aiRestartOnResume = false;
+let aiSkipNextEnd = false;
+let aiPrefetch = null;
+let aiPrefetchController = null;
+let aiCurrentBaseSpeed = 1;
+let isPreparingRemaining = false;
+let prepareSession = 0;
+let chunkWaiters = [];
 
-let freeUsageMs = 0;
-let subscriptionActive = false;
-let billingLoaded = false;
-let usageSessionStartedAt = null;
-let usageTicker = null;
-let limitHandlingInProgress = false;
+async function loadPdfjs() {
+  if (pdfjsModule) {
+    return pdfjsModule;
+  }
+  if (!pdfjsLoading) {
+    const moduleUrl = chrome.runtime.getURL(
+      "node_modules/pdfjs-dist/legacy/build/pdf.min.mjs"
+    );
+    pdfjsLoading = import(moduleUrl)
+      .then((module) => {
+        pdfjsModule = module?.default || module;
+        if (pdfjsModule?.GlobalWorkerOptions) {
+          pdfjsModule.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
+            "node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"
+          );
+        }
+        return pdfjsModule;
+      })
+      .catch((error) => {
+        pdfjsLoading = null;
+        throw error;
+      });
+  }
+  return pdfjsLoading;
+}
 
-if (pdfjs?.GlobalWorkerOptions) {
-  pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
-    "node_modules/pdfjs-dist/build/pdf.worker.min.js"
-  );
+function isAiMode() {
+  return state.ttsMode === "ai";
+}
+
+function createDeviceToken() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `device_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function getDeviceToken() {
+  if (deviceTokenPromise) {
+    return deviceTokenPromise;
+  }
+  deviceTokenPromise = new Promise((resolve) => {
+    chrome.storage.local.get(["deviceToken"], (result) => {
+      if (result?.deviceToken) {
+        resolve(result.deviceToken);
+        return;
+      }
+      const nextToken = createDeviceToken();
+      chrome.storage.local.set({ deviceToken: nextToken }, () => {
+        resolve(nextToken);
+      });
+    });
+  });
+  return deviceTokenPromise;
+}
+
+async function fetchAiAudio(text, language, speed, controller) {
+  if (!AI_TTS_ENDPOINT) {
+    throw new Error("AI voice is not configured.");
+  }
+  const usedController = controller || new AbortController();
+  if (!controller) {
+    aiAbortController = usedController;
+  }
+  const payload = {
+    input: text,
+    text,
+    speed,
+    voice: AI_DEFAULT_VOICE,
+    response_format: "mp3",
+  };
+  const token = await getDeviceToken();
+  const response = await fetch(AI_TTS_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-device-token": token,
+    },
+    body: JSON.stringify(payload),
+    signal: usedController.signal,
+  });
+  if (!response.ok) {
+    if (response.status === 402) {
+      const error = new Error("not-enough-queries");
+      error.code = "not-enough-queries";
+      throw error;
+    }
+    if (response.status === 401) {
+      const error = new Error("unauthorized");
+      error.code = "unauthorized";
+      throw error;
+    }
+    throw new Error("AI voice request failed.");
+  }
+  return response.blob();
 }
 
 function refreshVoices() {
@@ -54,147 +156,7 @@ if (speechSynthesis.onvoiceschanged !== undefined) {
 }
 refreshVoices();
 
-function getStorage(keys) {
-  return new Promise((resolve) => {
-    if (!chrome?.storage?.local) {
-      resolve({});
-      return;
-    }
-    chrome.storage.local.get(keys, (result) => {
-      if (chrome.runtime.lastError) {
-        resolve({});
-        return;
-      }
-      resolve(result || {});
-    });
-  });
-}
-
-function setStorage(values) {
-  return new Promise((resolve) => {
-    if (!chrome?.storage?.local) {
-      resolve();
-      return;
-    }
-    chrome.storage.local.set(values, () => {
-      resolve();
-    });
-  });
-}
-
-function getUsageWithCurrentSessionMs() {
-  if (!usageSessionStartedAt) {
-    return freeUsageMs;
-  }
-  return freeUsageMs + Math.max(Date.now() - usageSessionStartedAt, 0);
-}
-
-function getFreeMinutesLeftMs() {
-  return Math.max(FREE_MINUTES_LIMIT_MS - getUsageWithCurrentSessionMs(), 0);
-}
-
-function isPaywallRequired() {
-  return !subscriptionActive && getFreeMinutesLeftMs() <= 0;
-}
-
-function syncBillingState() {
-  state.freeUsageMs = Math.floor(getUsageWithCurrentSessionMs());
-  state.freeMinutesLeftMs = getFreeMinutesLeftMs();
-  state.freeMinutesTotalMs = FREE_MINUTES_LIMIT_MS;
-  state.isSubscribed = subscriptionActive;
-  state.paywallRequired = isPaywallRequired();
-}
-
-async function ensureBillingLoaded() {
-  if (billingLoaded) {
-    return;
-  }
-  const stored = await getStorage([
-    STORAGE_KEYS.freeUsageMs,
-    STORAGE_KEYS.subscriptionActive,
-  ]);
-  const usageCandidate = Number(stored[STORAGE_KEYS.freeUsageMs]);
-  freeUsageMs = Number.isFinite(usageCandidate) ? Math.max(usageCandidate, 0) : 0;
-  subscriptionActive = Boolean(stored[STORAGE_KEYS.subscriptionActive]);
-  billingLoaded = true;
-  syncBillingState();
-}
-
-async function persistUsage() {
-  await setStorage({
-    [STORAGE_KEYS.freeUsageMs]: Math.floor(freeUsageMs),
-  });
-}
-
-function startUsageSession() {
-  if (subscriptionActive || usageSessionStartedAt || state.status !== "reading") {
-    return;
-  }
-  usageSessionStartedAt = Date.now();
-  syncBillingState();
-}
-
-async function flushUsageSession({ persist = true } = {}) {
-  if (!usageSessionStartedAt) {
-    syncBillingState();
-    return;
-  }
-  const elapsedMs = Math.max(Date.now() - usageSessionStartedAt, 0);
-  usageSessionStartedAt = null;
-  freeUsageMs += elapsedMs;
-  if (!subscriptionActive) {
-    freeUsageMs = Math.min(freeUsageMs, FREE_MINUTES_LIMIT_MS);
-  }
-  syncBillingState();
-  if (persist) {
-    await persistUsage();
-  }
-}
-
-function clearUsageTicker() {
-  if (usageTicker) {
-    clearInterval(usageTicker);
-    usageTicker = null;
-  }
-}
-
-async function handleLimitReached() {
-  if (state.status === "limited" || limitHandlingInProgress) {
-    return;
-  }
-  limitHandlingInProgress = true;
-  try {
-    cancelSpeech();
-    clearUsageTicker();
-    await flushUsageSession({ persist: true });
-    currentChunkIndex = 0;
-    state.currentChunk = 0;
-    setStatus("limited", "Free minutes are over. Upgrade to continue reading.");
-  } finally {
-    limitHandlingInProgress = false;
-  }
-}
-
-function ensureUsageTicker() {
-  if (usageTicker) {
-    return;
-  }
-  usageTicker = setInterval(() => {
-    if (state.status !== "reading") {
-      clearUsageTicker();
-      return;
-    }
-    syncBillingState();
-    if (isPaywallRequired()) {
-      handleLimitReached();
-      return;
-    }
-    sendStateUpdate();
-  }, 1000);
-}
-
 function sendStateUpdate() {
-  syncBillingState();
   chrome.runtime.sendMessage({ type: "stateUpdate", state });
 }
 
@@ -202,6 +164,24 @@ function setStatus(status, message = "") {
   state.status = status;
   state.message = message;
   sendStateUpdate();
+}
+
+function resolvePdfUrl() {
+  if (document.contentType === "application/pdf") {
+    return window.location.href;
+  }
+  const embed = document.querySelector(
+    'embed[type="application/pdf"], object[type="application/pdf"]'
+  );
+  const source = embed?.src || embed?.data;
+  if (source) {
+    try {
+      return new URL(source, window.location.href).href;
+    } catch (error) {
+      return source;
+    }
+  }
+  return "";
 }
 
 function normalizeText(text) {
@@ -216,9 +196,11 @@ function splitIntoSentences(text) {
   return matches.map((sentence) => sentence.trim()).filter(Boolean);
 }
 
-function buildChunks(pages) {
+function buildChunks(pages, options = {}) {
   const chunks = [];
-  const maxLength = 1200;
+  const maxLength = 900;
+  const firstChunkMaxLength = 400;
+  const useFirstChunkLimit = options.useFirstChunkLimit !== false;
 
   pages.forEach((pageText) => {
     const normalized = normalizeText(pageText);
@@ -231,7 +213,11 @@ function buildChunks(pages) {
 
     parts.forEach((sentence) => {
       const candidate = current ? `${current} ${sentence}` : sentence;
-      if (candidate.length > maxLength) {
+      const limit =
+        chunks.length === 0 && useFirstChunkLimit
+          ? firstChunkMaxLength
+          : maxLength;
+      if (candidate.length > limit) {
         if (current) {
           chunks.push(current.trim());
           current = sentence;
@@ -250,6 +236,21 @@ function buildChunks(pages) {
   });
 
   return chunks;
+}
+
+function notifyChunkWaiters() {
+  if (!chunkWaiters.length) {
+    return;
+  }
+  const waiters = chunkWaiters.slice();
+  chunkWaiters = [];
+  waiters.forEach((resolve) => resolve());
+}
+
+function waitForMoreChunks() {
+  return new Promise((resolve) => {
+    chunkWaiters.push(resolve);
+  });
 }
 
 async function detectLanguageFromText(text) {
@@ -295,7 +296,8 @@ function pickVoiceForLanguage(language) {
 }
 
 async function extractPdfText(url) {
-  if (!pdfjs) {
+  const pdfjs = await loadPdfjs();
+  if (!pdfjs?.getDocument) {
     throw new Error("PDF engine not available.");
   }
   const loadingTask = pdfjs.getDocument({ url, withCredentials: true });
@@ -317,36 +319,131 @@ async function extractPdfText(url) {
 
 async function prepareText() {
   if (isPreparing) {
-    return;
+    return false;
   }
   isPreparing = true;
+  prepareSession += 1;
+  const sessionId = prepareSession;
+  isPreparingRemaining = false;
+  notifyChunkWaiters();
   try {
-    const { pages, totalPages } = await extractPdfText(window.location.href);
-    state.totalPages = totalPages;
-    textChunks = buildChunks(pages);
-    state.totalChunks = textChunks.length;
+    const pdfUrl = resolvePdfUrl();
+    if (!pdfUrl) {
+      setStatus("error", "Active tab does not appear to be a PDF.");
+      return false;
+    }
+    const pdfjs = await loadPdfjs();
+    if (!pdfjs?.getDocument) {
+      setStatus("error", "PDF engine not available.");
+      return false;
+    }
+    const loadingTask = pdfjs.getDocument({
+      url: pdfUrl,
+      withCredentials: true,
+    });
+    const pdf = await loadingTask.promise;
+    if (sessionId !== prepareSession) {
+      return false;
+    }
+    state.totalPages = pdf.numPages;
+    textChunks = [];
+    state.totalChunks = 0;
     state.currentChunk = 0;
 
-    if (!textChunks.length) {
+    const maxInitialPages = Math.min(3, pdf.numPages);
+    const initialPages = [];
+    let nextPageToLoad = 1;
+    let initialChunks = [];
+
+    while (nextPageToLoad <= maxInitialPages) {
+      const page = await pdf.getPage(nextPageToLoad);
+      if (sessionId !== prepareSession) {
+        return false;
+      }
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item) => item.str)
+        .filter(Boolean)
+        .join(" ");
+      initialPages.push(pageText);
+      initialChunks = buildChunks(initialPages);
+      nextPageToLoad += 1;
+      if (initialChunks.length) {
+        break;
+      }
+    }
+
+    textChunks = initialChunks;
+    state.totalChunks = textChunks.length;
+    if (textChunks.length) {
+      const sample = textChunks.slice(0, 3).join(" ").slice(0, 1000);
+      detectedLanguage = await detectLanguageFromText(sample);
+      state.language = detectedLanguage;
+      selectedVoice = pickVoiceForLanguage(detectedLanguage);
+      setStatus("idle", "");
+      if (isAiMode()) {
+        startAiPrefetch(0);
+      }
+    }
+
+    if (nextPageToLoad <= pdf.numPages) {
+      isPreparingRemaining = true;
+      prepareRemainingPages(pdf, nextPageToLoad, sessionId);
+    } else {
+      isPreparingRemaining = false;
+    }
+
+    if (!textChunks.length && !isPreparingRemaining) {
       setStatus(
         "error",
         "No selectable text found. This PDF might be scanned."
       );
-      isPreparing = false;
-      return;
+      return false;
     }
-
-    const sample = textChunks.slice(0, 3).join(" ").slice(0, 1000);
-    detectedLanguage = await detectLanguageFromText(sample);
-    state.language = detectedLanguage;
-    selectedVoice = pickVoiceForLanguage(detectedLanguage);
-    setStatus("idle", "");
+    return true;
   } catch (error) {
     const message =
       "Unable to access PDF text. For local files, enable file access in the extension settings.";
     setStatus("error", message);
+    return false;
   } finally {
     isPreparing = false;
+  }
+}
+
+async function prepareRemainingPages(pdf, startPage, sessionId) {
+  try {
+    for (let pageNumber = startPage; pageNumber <= pdf.numPages; pageNumber += 1) {
+      if (sessionId !== prepareSession) {
+        return;
+      }
+      const page = await pdf.getPage(pageNumber);
+      if (sessionId !== prepareSession) {
+        return;
+      }
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .map((item) => item.str)
+        .filter(Boolean)
+        .join(" ");
+      const newChunks = buildChunks([pageText], {
+        useFirstChunkLimit: textChunks.length === 0,
+      });
+      if (newChunks.length) {
+        textChunks.push(...newChunks);
+        state.totalChunks = textChunks.length;
+        notifyChunkWaiters();
+        sendStateUpdate();
+      }
+    }
+  } catch (error) {
+    // ignore background extraction errors
+  } finally {
+    if (sessionId === prepareSession) {
+      isPreparingRemaining = false;
+      notifyChunkWaiters();
+      sendStateUpdate();
+    }
   }
 }
 
@@ -364,7 +461,7 @@ function createUtterance(text) {
   return utterance;
 }
 
-async function handleUtteranceEnd() {
+function handleUtteranceEnd() {
   if (skipNextEnd) {
     skipNextEnd = false;
     return;
@@ -375,25 +472,17 @@ async function handleUtteranceEnd() {
   currentChunkIndex += 1;
   if (currentChunkIndex >= textChunks.length) {
     state.currentChunk = textChunks.length;
-    clearUsageTicker();
-    await flushUsageSession({ persist: true });
     setStatus("finished", "");
     return;
   }
   speakCurrentChunk();
 }
 
-async function handleUtteranceError() {
-  clearUsageTicker();
-  await flushUsageSession({ persist: true });
+function handleUtteranceError() {
   setStatus("error", "Speech stopped unexpectedly.");
 }
 
 function speakCurrentChunk() {
-  if (isPaywallRequired()) {
-    handleLimitReached();
-    return;
-  }
   if (!textChunks.length) {
     setStatus("error", "No text available to read.");
     return;
@@ -423,106 +512,305 @@ function cancelSpeech() {
   speechSynthesis.cancel();
 }
 
-async function startReading() {
-  await ensureBillingLoaded();
-  if (isPaywallRequired()) {
-    setStatus("limited", "Free minutes are over. Upgrade to continue reading.");
+function stopAiPlayback() {
+  aiPlaybackToken += 1;
+  if (aiAbortController) {
+    aiAbortController.abort();
+    aiAbortController = null;
+  }
+  if (aiPrefetchController) {
+    aiPrefetchController.abort();
+    aiPrefetchController = null;
+  }
+  aiPrefetch = null;
+  if (aiAudio) {
+    aiSkipNextEnd = true;
+    aiAudio.pause();
+    aiAudio = null;
+  }
+  if (aiCurrentUrl) {
+    URL.revokeObjectURL(aiCurrentUrl);
+    aiCurrentUrl = null;
+  }
+  aiCurrentBaseSpeed = 1;
+}
+
+function startAiPrefetch(index) {
+  if (!isAiAvailable() || !textChunks.length) {
     return;
   }
+  if (index < 0 || index >= textChunks.length) {
+    return;
+  }
+  if (
+    aiPrefetch &&
+    aiPrefetch.index === index &&
+    aiPrefetch.speed === state.speed
+  ) {
+    return;
+  }
+  if (aiPrefetchController) {
+    aiPrefetchController.abort();
+  }
+  const chunk = textChunks[index];
+  if (!chunk) {
+    return;
+  }
+  const controller = new AbortController();
+  aiPrefetchController = controller;
+  aiPrefetch = {
+    index,
+    speed: state.speed,
+    promise: fetchAiAudio(chunk, detectedLanguage, state.speed, controller),
+  };
+}
 
+async function getAiBlob(index) {
+  if (!textChunks.length) {
+    return null;
+  }
+  const speed = state.speed;
+  if (
+    aiPrefetch &&
+    aiPrefetch.index === index &&
+    aiPrefetch.speed === speed
+  ) {
+    try {
+      const blob = await aiPrefetch.promise;
+      return { blob, baseSpeed: aiPrefetch.speed };
+    } finally {
+      aiPrefetch = null;
+      aiPrefetchController = null;
+    }
+  }
+  const chunk = textChunks[index];
+  if (!chunk) {
+    return null;
+  }
+  const blob = await fetchAiAudio(chunk, detectedLanguage, speed);
+  return { blob, baseSpeed: speed };
+}
+
+async function playAiChunk() {
+  if (!textChunks.length) {
+    if (isPreparingRemaining) {
+      setStatus("loading", "Loading more pages...");
+      await waitForMoreChunks();
+      if (!isAiMode() || state.status === "paused") {
+        return;
+      }
+      playAiChunk();
+      return;
+    }
+    setStatus("error", "No text available to read.");
+    return;
+  }
+  if (currentChunkIndex >= textChunks.length) {
+    if (isPreparingRemaining) {
+      setStatus("loading", "Loading more pages...");
+      await waitForMoreChunks();
+      if (!isAiMode() || state.status === "paused") {
+        return;
+      }
+      playAiChunk();
+      return;
+    }
+    state.currentChunk = textChunks.length;
+    setStatus("finished", "");
+    return;
+  }
+  const chunk = textChunks[currentChunkIndex];
+  if (!chunk) {
+    currentChunkIndex += 1;
+    playAiChunk();
+    return;
+  }
+  const token = aiPlaybackToken;
+  state.currentChunk = currentChunkIndex + 1;
+  sendStateUpdate();
+  try {
+    const result = await getAiBlob(currentChunkIndex);
+    if (
+      token !== aiPlaybackToken ||
+      !isAiMode() ||
+      (state.status !== "reading" && state.status !== "loading")
+    ) {
+      return;
+    }
+    if (!result?.blob) {
+      setStatus("error", "AI voice failed.");
+      return;
+    }
+    const { blob, baseSpeed } = result;
+    const url = URL.createObjectURL(blob);
+    aiCurrentUrl = url;
+    const audio = new Audio(url);
+    aiAudio = audio;
+    aiCurrentBaseSpeed = baseSpeed;
+    audio.playbackRate = baseSpeed > 0 ? state.speed / baseSpeed : 1;
+    audio.onended = () => {
+      if (aiSkipNextEnd) {
+        aiSkipNextEnd = false;
+        return;
+      }
+      URL.revokeObjectURL(url);
+      aiCurrentUrl = null;
+      if (!isAiMode() || state.status !== "reading") {
+        return;
+      }
+      currentChunkIndex += 1;
+      startAiPrefetch(currentChunkIndex + 1);
+      playAiChunk();
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      aiCurrentUrl = null;
+      setStatus("error", "AI voice failed.");
+    };
+    await audio.play();
+    setStatus("reading", "");
+    startAiPrefetch(currentChunkIndex + 1);
+  } catch (error) {
+    if (error?.code === "not-enough-queries") {
+      setStatus("limited", "No minutes left. Open the extension to upgrade.");
+      return;
+    }
+    setStatus("error", "AI voice failed.");
+  }
+}
+
+async function startAiReading() {
+  if (!isAiAvailable()) {
+    setStatus("error", "AI voice is not configured.");
+    return;
+  }
   if (state.status === "reading") {
     return;
   }
   if (state.status === "paused") {
-    await resumeReading();
+    resumeAiReading();
     return;
   }
-
   if (!textChunks.length) {
     setStatus("loading", "Loading PDF text...");
-    await prepareText();
-    if (!textChunks.length) {
+    const ready = await prepareText();
+    if (!ready) {
       return;
     }
   }
-
-  if (state.status === "finished" || state.status === "idle" || state.status === "limited") {
+  if (state.status === "finished" || state.status === "idle") {
     currentChunkIndex = 0;
   }
-
   cancelSpeech();
-  state.currentChunk = currentChunkIndex + 1;
-  setStatus("reading", "");
-  startUsageSession();
-  ensureUsageTicker();
-  speakCurrentChunk();
+  stopAiPlayback();
+  setStatus("loading", "Generating audio...");
+  playAiChunk();
 }
 
-async function pauseReading() {
+function pauseAiReading() {
   if (state.status !== "reading") {
     return;
   }
-  speechSynthesis.pause();
-  clearUsageTicker();
-  await flushUsageSession({ persist: true });
+  if (aiAudio) {
+    aiAudio.pause();
+  }
   setStatus("paused", "");
 }
 
-async function resumeReading() {
-  await ensureBillingLoaded();
+function resumeAiReading() {
   if (state.status !== "paused") {
     return;
   }
-  if (isPaywallRequired()) {
-    setStatus("limited", "Free minutes are over. Upgrade to continue reading.");
-    return;
-  }
   setStatus("reading", "");
-  startUsageSession();
-  ensureUsageTicker();
-  if (restartOnResume) {
-    restartOnResume = false;
-    cancelSpeech();
-    speakCurrentChunk();
+  if (aiRestartOnResume) {
+    aiRestartOnResume = false;
+    stopAiPlayback();
+    playAiChunk();
     return;
   }
-  speechSynthesis.resume();
+  if (aiAudio) {
+    aiAudio.playbackRate =
+      aiCurrentBaseSpeed > 0 ? state.speed / aiCurrentBaseSpeed : 1;
+    aiAudio.play();
+  } else {
+    playAiChunk();
+  }
 }
 
-async function stopReading() {
-  cancelSpeech();
-  clearUsageTicker();
-  await flushUsageSession({ persist: true });
+function stopAiReading() {
+  stopAiPlayback();
   currentChunkIndex = 0;
   state.currentChunk = 0;
   setStatus("idle", "");
+}
+
+async function startReading() {
+  if (!isAiAvailable()) {
+    setStatus("error", "AI voice is not configured.");
+    return;
+  }
+  await startAiReading();
+}
+
+function pauseReading() {
+  if (!isAiAvailable()) {
+    setStatus("error", "AI voice is not configured.");
+    return;
+  }
+  pauseAiReading();
+}
+
+function resumeReading() {
+  if (!isAiAvailable()) {
+    setStatus("error", "AI voice is not configured.");
+    return;
+  }
+  resumeAiReading();
+}
+
+function stopReading() {
+  if (!isAiAvailable()) {
+    setStatus("error", "AI voice is not configured.");
+    return;
+  }
+  stopAiReading();
 }
 
 function setSpeed(speed) {
   if (!Number.isFinite(speed)) {
     return;
   }
-  state.speed = speed;
-  if (state.status === "reading") {
-    cancelSpeech();
-    speakCurrentChunk();
+  if (!isAiAvailable()) {
     return;
   }
+  state.speed = speed;
+  if (aiAudio) {
+    aiAudio.playbackRate =
+      aiCurrentBaseSpeed > 0 ? state.speed / aiCurrentBaseSpeed : 1;
+  }
+  if (aiPrefetchController) {
+    aiPrefetchController.abort();
+    aiPrefetchController = null;
+    aiPrefetch = null;
+  }
+  if (state.status === "reading") {
+    startAiPrefetch(currentChunkIndex + 1);
+  }
   if (state.status === "paused") {
-    restartOnResume = true;
+    aiRestartOnResume = false;
   }
   sendStateUpdate();
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message?.type) {
-    ensureBillingLoaded().then(() => sendResponse({ state }));
-    return true;
+    sendResponse({ state });
+    return false;
   }
 
   if (message.type === "getState") {
-    ensureBillingLoaded().then(() => sendResponse({ state }));
-    return true;
+    sendResponse({ state });
+    return false;
   }
 
   if (message.type === "start") {
@@ -531,18 +819,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "pause") {
-    pauseReading().then(() => sendResponse({ state }));
-    return true;
+    pauseReading();
+    sendResponse({ state });
+    return false;
   }
 
   if (message.type === "resume") {
-    resumeReading().then(() => sendResponse({ state }));
-    return true;
+    resumeReading();
+    sendResponse({ state });
+    return false;
   }
 
   if (message.type === "stop") {
-    stopReading().then(() => sendResponse({ state }));
-    return true;
+    stopReading();
+    sendResponse({ state });
+    return false;
   }
 
   if (message.type === "setSpeed") {
@@ -551,55 +842,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.type === "setTtsMode") {
+    const nextMode = "ai";
+    if (!isAiAvailable()) {
+      setStatus("error", "AI voice is not configured.");
+      sendResponse({ state });
+      return false;
+    }
+    if (state.ttsMode !== nextMode) {
+      cancelSpeech();
+      stopAiPlayback();
+      currentChunkIndex = 0;
+      state.currentChunk = 0;
+      state.ttsMode = nextMode;
+      setStatus("idle", "");
+      if (state.ttsMode === "ai" && textChunks.length) {
+        startAiPrefetch(0);
+      }
+      sendResponse({ state });
+      return false;
+    }
+    sendStateUpdate();
+    sendResponse({ state });
+    return false;
+  }
+
   sendResponse({ state });
   return false;
 });
 
-if (chrome?.storage?.onChanged) {
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "local") {
-      return;
-    }
-
-    let shouldSync = false;
-
-    if (changes[STORAGE_KEYS.freeUsageMs]) {
-      const usageCandidate = Number(changes[STORAGE_KEYS.freeUsageMs].newValue);
-      freeUsageMs = Number.isFinite(usageCandidate) ? Math.max(usageCandidate, 0) : 0;
-      shouldSync = true;
-    }
-
-    if (changes[STORAGE_KEYS.subscriptionActive]) {
-      subscriptionActive = Boolean(changes[STORAGE_KEYS.subscriptionActive].newValue);
-      shouldSync = true;
-    }
-
-    if (!shouldSync) {
-      return;
-    }
-
-    syncBillingState();
-
-    if (subscriptionActive && state.status === "limited") {
-      setStatus("idle", "");
-      return;
-    }
-
-    if (isPaywallRequired() && state.status === "reading") {
-      handleLimitReached();
-      return;
-    }
-
-    sendStateUpdate();
-  });
-}
-
-ensureBillingLoaded().then(() => {
-  sendStateUpdate();
-});
-
 window.addEventListener("beforeunload", () => {
-  clearUsageTicker();
-  flushUsageSession({ persist: true });
   speechSynthesis.cancel();
+  stopAiPlayback();
 });

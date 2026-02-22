@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PDF Text to Speech</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="container nav">
+        <div class="brand">PDF Text to Speech</div>
+        <nav class="menu">
+          <a href="#pricing">Pricing</a>
+          <a href="#install">Install</a>
+          <a href="#feedback">Feedback</a>
+          <a href="#policies">Policies</a>
+        </nav>
+        <a class="btn primary" href="#install">Install</a>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <h1>PDF Text to Speech</h1>
+            <p>
+              Listen to PDF documents directly in Chrome. Automatic language
+              detection, smooth playback, and a simple one-click experience.
+            </p>
+            <div class="hero-actions">
+              <a class="btn primary" href="#install">Install extension</a>
+              <a class="btn ghost" href="#pricing">View pricing</a>
+            </div>
+            <p class="hero-note">
+              Works with online PDFs and files opened in Chrome.
+            </p>
+          </div>
+          <div class="hero-visual">
+            <img
+              class="hero-image"
+              src="assets/hero-icon.png"
+              onerror="this.onerror=null;this.src='assets/hero.svg';"
+              alt="Read PDFs aloud"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section id="pricing" class="section">
+        <div class="container">
+          <h2>Pricing</h2>
+          <p class="section-subtitle">
+            Start free, then unlock more listening time with a simple plan.
+          </p>
+          <div class="pricing-grid">
+            <div class="card pricing-card" data-plan="free">
+              <h3>Free</h3>
+              <p class="price">5 minutes</p>
+              <ul>
+                <li>Try the AI voice</li>
+                <li>No credit card required</li>
+              </ul>
+              <a class="btn ghost price-cta" href="#install">Get Started</a>
+            </div>
+            <div class="card pricing-card highlight selected" data-plan="monthly">
+              <div class="badge">Most popular</div>
+              <h3>Monthly</h3>
+              <p class="price">$9.99 / month</p>
+              <ul>
+                <li>Up to 6 hours per month</li>
+                <li>Auto language detection</li>
+                <li>Priority support</li>
+              </ul>
+              <a class="btn primary price-cta" href="#install">Get Started</a>
+            </div>
+            <div class="card pricing-card" data-plan="annual">
+              <h3>Annual</h3>
+              <p class="price">$89.99 / year</p>
+              <ul>
+                <li>Up to 72 hours per year</li>
+                <li>Save 25% vs monthly</li>
+                <li>Priority support</li>
+              </ul>
+              <a class="btn ghost price-cta" href="#install">Get Started</a>
+            </div>
+          </div>
+          <div class="addons">
+            <h4>Top-up hours</h4>
+            <p>Need more time? Add extra hours anytime:</p>
+            <ul>
+              <li>3 hours - $5.99</li>
+              <li>5 hours - $8.99</li>
+              <li>10 hours - $15.99</li>
+              <li>20 hours - $27.99</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="install" class="section alt">
+        <div class="container install">
+          <div>
+            <h2>Install the extension</h2>
+            <p>
+              Add PDF Text to Speech from the Chrome Web Store and pin it for
+              one-click access. You get:
+            </p>
+            <ul class="benefits">
+              <li>30+ commonly used languages with auto detection</li>
+              <li>Multiple playback speeds</li>
+              <li>Works with online PDFs and local files</li>
+              <li>Smooth, continuous listening experience</li>
+            </ul>
+          </div>
+          <a
+            class="btn primary"
+            href="https://chromewebstore.google.com/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Install from Chrome Web Store
+          </a>
+        </div>
+      </section>
+
+      <section id="feedback" class="section">
+        <div class="container">
+          <h2>Feedback</h2>
+          <p class="section-subtitle">
+            Tell us what to improve or request a feature.
+          </p>
+          <form
+            class="feedback-form"
+            action="mailto:info@captain.works"
+            method="post"
+            enctype="text/plain"
+          >
+            <div class="field">
+              <label for="name">Name</label>
+              <input id="name" name="name" type="text" placeholder="Your name" />
+            </div>
+            <div class="field">
+              <label for="email">Email</label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                placeholder="you@email.com"
+                required
+              />
+            </div>
+            <div class="field">
+              <label for="message">Message</label>
+              <textarea
+                id="message"
+                name="message"
+                rows="4"
+                placeholder="How can we help?"
+                required
+              ></textarea>
+            </div>
+            <button class="btn primary" type="submit">Send feedback</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="policies" class="section">
+        <div class="container policies">
+          <h2>Policies</h2>
+          <p class="section-subtitle">
+            Read the full policies below:
+          </p>
+          <ul class="policy-links">
+            <li><a href="terms.html">Terms of Service</a></li>
+            <li><a href="privacy.html">Privacy Notice</a></li>
+            <li><a href="refunds.html">Refund Policy</a></li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <p>Copyright 2026 Tech Product Partners KFT. All rights reserved.</p>
+        <p>
+          Contact: <a href="mailto:info@captain.works">info@captain.works</a> |
+          Tech Product Partners KFT, 11 Ady Endre utca, Tesa, Hungary, 2636
+        </p>
+      </div>
+    </footer>
+    <script>
+      const pricingCards = document.querySelectorAll(".pricing-card");
+      pricingCards.forEach((card) => {
+        card.addEventListener("click", () => {
+          pricingCards.forEach((item) => item.classList.remove("selected"));
+          card.classList.add("selected");
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,289 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --primary-1: #f255a0;
+  --primary-2: #8b4cf6;
+  --primary-3: #4a6fe8;
+  --dark: #0f172a;
+  --muted: #475569;
+  --gradient: linear-gradient(135deg, #f255a0 0%, #8b4cf6 52%, #4a6fe8 100%);
+}
+
+body {
+  margin: 0;
+  font-family: Arial, Helvetica, sans-serif;
+  color: var(--dark);
+  background: #ffffff;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.container {
+  width: min(1100px, 92vw);
+  margin: 0 auto;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+  z-index: 10;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 0;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.menu {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  color: #475569;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.btn.primary {
+  background: var(--gradient);
+  color: #ffffff;
+}
+
+.btn.ghost {
+  border-color: #cbd5f5;
+  color: #1e293b;
+  background: #ffffff;
+}
+
+.hero {
+  padding: 70px 0 50px;
+  background: var(--gradient);
+  color: #ffffff;
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  align-items: center;
+  gap: 32px;
+}
+
+.hero-copy h1 {
+  font-size: clamp(28px, 4vw, 40px);
+  margin-bottom: 12px;
+}
+
+.hero-copy p {
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1.6;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 20px 0 12px;
+}
+
+.hero-note {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.hero-visual img {
+  width: min(420px, 90%);
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+.hero-image {
+  filter: hue-rotate(315deg) saturate(1.2) brightness(1.05);
+}
+
+.section {
+  padding: 56px 0;
+}
+
+.section.alt {
+  background: #f8fafc;
+}
+
+h2 {
+  font-size: 28px;
+  margin-bottom: 12px;
+}
+
+.section-subtitle {
+  color: #475569;
+  margin-bottom: 24px;
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 20px;
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.card.highlight {
+  border-color: var(--primary-2);
+  box-shadow: 0 10px 24px rgba(139, 76, 246, 0.18);
+}
+
+.pricing-card:hover,
+.pricing-card:focus-within {
+  border-color: var(--primary-2);
+  box-shadow: 0 12px 24px rgba(139, 76, 246, 0.2);
+  transform: translateY(-2px);
+}
+
+.pricing-card.selected {
+  border-color: var(--primary-1);
+  box-shadow: 0 16px 32px rgba(139, 76, 246, 0.24);
+  transform: translateY(-2px);
+}
+
+.badge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: var(--primary-2);
+  color: #ffffff;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.price {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.price-cta {
+  margin-top: 16px;
+  width: 100%;
+}
+
+.card ul,
+.addons ul {
+  padding-left: 18px;
+  margin: 0;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.addons {
+  margin-top: 28px;
+  background: #f5f3ff;
+  border-radius: 12px;
+  padding: 18px;
+}
+
+.benefits {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.install {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.feedback-form {
+  display: grid;
+  gap: 14px;
+  max-width: 520px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+input,
+textarea {
+  border: 1px solid #d4d4f5;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.contact p {
+  margin: 6px 0;
+}
+
+.policy {
+  margin-bottom: 20px;
+}
+
+.footer {
+  border-top: 1px solid #e2e8f0;
+  padding: 20px 0;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.policy-links {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.policy-links a {
+  color: var(--primary-2);
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .menu {
+    display: none;
+  }
+
+  .nav {
+    justify-content: space-between;
+  }
+}
