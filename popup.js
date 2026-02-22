@@ -7,7 +7,9 @@ const speedSelect = document.getElementById("speed");
 const openFileBtn = document.getElementById("openFile");
 const fileInput = document.getElementById("fileInput");
 const authStatusEl = document.getElementById("authStatus");
+const subscribeButton = document.getElementById("subscribeButton");
 const paywallCard = document.getElementById("paywallCard");
+const paywallClose = document.getElementById("paywallClose");
 const planToggle = document.getElementById("planToggle");
 const checkoutButton = document.getElementById("checkoutButton");
 const addonSection = document.getElementById("addonSection");
@@ -21,6 +23,7 @@ const contactEmail = document.getElementById("contactEmail");
 const contactMessage = document.getElementById("contactMessage");
 const contactSend = document.getElementById("contactSend");
 const contactCancel = document.getElementById("contactCancel");
+const contactClose = document.getElementById("contactClose");
 const contactStatus = document.getElementById("contactStatus");
 const tokenInfo = document.getElementById("tokenInfo");
 
@@ -81,6 +84,7 @@ let deviceTokenPromise = null;
 let selectedPlan = "annual";
 let isPaywallOpen = false;
 let isContactOpen = false;
+let paywallForced = false;
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -143,6 +147,7 @@ function updateAccountUI() {
     portalButton.classList.add("hidden");
     getPlanToggle.classList.add("hidden");
     contactToggle.classList.add("hidden");
+    subscribeButton.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -153,6 +158,7 @@ function updateAccountUI() {
     portalButton.classList.add("hidden");
     getPlanToggle.classList.add("hidden");
     contactToggle.classList.add("hidden");
+    subscribeButton.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
@@ -163,14 +169,16 @@ function updateAccountUI() {
     getPlanToggle.classList.remove("hidden");
     contactToggle.classList.remove("hidden");
     tokenInfo.classList.add("hidden");
+    paywallForced = false;
     paywallCard.classList.toggle("hidden", !isPaywallOpen);
+    subscribeButton.classList.remove("hidden");
     return;
   }
 
   const hasMinutes = typeof minutesLeft === "number" && minutesLeft > 0;
   const noMinutes = typeof minutesLeft === "number" && minutesLeft <= 0;
   const showAddons = paid && noMinutes;
-  const showPaywall = (!paid && !trialActive) || showAddons;
+  paywallForced = noMinutes;
 
   authStatusEl.textContent = paid
     ? noMinutes
@@ -180,6 +188,9 @@ function updateAccountUI() {
     ? "Trial active."
     : "No active subscription.";
 
+  if (paywallForced) {
+    isPaywallOpen = true;
+  }
   paywallCard.classList.toggle("hidden", !isPaywallOpen);
   planToggle.classList.toggle("hidden", paid);
   checkoutButton.classList.toggle("hidden", paid);
@@ -187,6 +198,7 @@ function updateAccountUI() {
   portalButton.classList.toggle("hidden", !portalAvailable);
   getPlanToggle.classList.remove("hidden");
   contactToggle.classList.remove("hidden");
+  subscribeButton.classList.toggle("hidden", paywallForced && paid);
 
   if (trialActive) {
     getPlanToggle.classList.add("ghost");
@@ -315,12 +327,20 @@ function setSelectedPlan(plan) {
 }
 
 function updatePanels() {
-  paywallCard.classList.toggle("hidden", !isPaywallOpen);
+  const shouldShowPaywall = isPaywallOpen || paywallForced;
+  paywallCard.classList.toggle("hidden", !shouldShowPaywall);
   contactForm.classList.toggle("hidden", !isContactOpen);
+  if (paywallClose) {
+    paywallClose.classList.toggle("hidden", paywallForced);
+  }
 }
 
 function setPaywallOpen(open) {
-  isPaywallOpen = open;
+  if (paywallForced) {
+    isPaywallOpen = true;
+  } else {
+    isPaywallOpen = open;
+  }
   if (open) {
     isContactOpen = false;
   }
@@ -330,7 +350,9 @@ function setPaywallOpen(open) {
 function setContactOpen(open) {
   isContactOpen = open;
   if (open) {
-    isPaywallOpen = false;
+    if (!paywallForced) {
+      isPaywallOpen = false;
+    }
   }
   updatePanels();
 }
@@ -1202,6 +1224,12 @@ if (getPlanToggle) {
   });
 }
 
+if (subscribeButton) {
+  subscribeButton.addEventListener("click", () => {
+    setPaywallOpen(true);
+  });
+}
+
 if (checkoutButton) {
   checkoutButton.addEventListener("click", () => {
     openCheckout(selectedPlan || "monthly");
@@ -1224,6 +1252,18 @@ portalButton.addEventListener("click", () => {
 if (contactToggle) {
   contactToggle.addEventListener("click", () => {
     setContactOpen(!isContactOpen);
+  });
+}
+
+if (paywallClose) {
+  paywallClose.addEventListener("click", () => {
+    setPaywallOpen(false);
+  });
+}
+
+if (contactClose) {
+  contactClose.addEventListener("click", () => {
+    setContactOpen(false);
   });
 }
 

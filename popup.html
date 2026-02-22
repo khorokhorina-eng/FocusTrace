@@ -26,10 +26,23 @@
           <option value="1.5">1.5x</option>
         </select>
       </label>
+      <button id="subscribeButton" class="secondary full-width">
+        Subscribe
+      </button>
       <div id="account" class="account">
         <p id="authStatus" class="account-status">Checking access...</p>
         <div id="paywallCard" class="paywall-card hidden">
-          <h2>Unlock all features</h2>
+          <div class="paywall-header">
+            <h2>Unlock all features</h2>
+            <button
+              id="paywallClose"
+              class="ghost icon-button"
+              type="button"
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
           <p class="paywall-subtitle">
             Get daily updates, crafted for you. Cancel anytime.
           </p>
@@ -49,7 +62,7 @@
             </button>
           </div>
           <button id="checkoutButton" class="primary paywall-cta">
-            Subscribe
+            Get plan
           </button>
           <div id="addonSection" class="addon-section hidden">
             <p class="addon-title">Need extra hours?</p>
@@ -81,6 +94,17 @@
           </button>
         </div>
         <div id="contactForm" class="contact-form hidden">
+          <div class="contact-header">
+            <h3>Contact us</h3>
+            <button
+              id="contactClose"
+              class="ghost icon-button"
+              type="button"
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
           <label class="contact-field">
             Email
             <input
