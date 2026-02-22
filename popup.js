@@ -13,7 +13,7 @@ const checkoutButton = document.getElementById("checkoutButton");
 const addonSection = document.getElementById("addonSection");
 const addonOptions = Array.from(document.querySelectorAll(".addon-option"));
 const planOptions = Array.from(document.querySelectorAll(".plan-option"));
-const upgradeLink = document.getElementById("upgradeLink");
+const getPlanToggle = document.getElementById("getPlanToggle");
 const portalButton = document.getElementById("portalButton");
 const contactToggle = document.getElementById("contactToggle");
 const contactForm = document.getElementById("contactForm");
@@ -79,6 +79,8 @@ let accountState = {
 };
 let deviceTokenPromise = null;
 let selectedPlan = "annual";
+let isPaywallOpen = false;
+let isContactOpen = false;
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -139,7 +141,7 @@ function updateAccountUI() {
     authStatusEl.textContent = "Billing not configured.";
     paywallCard.classList.add("hidden");
     portalButton.classList.add("hidden");
-    upgradeLink.classList.add("hidden");
+    getPlanToggle.classList.add("hidden");
     contactToggle.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
@@ -149,7 +151,7 @@ function updateAccountUI() {
     authStatusEl.textContent = "Checking access...";
     paywallCard.classList.add("hidden");
     portalButton.classList.add("hidden");
-    upgradeLink.classList.add("hidden");
+    getPlanToggle.classList.add("hidden");
     contactToggle.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
@@ -157,11 +159,11 @@ function updateAccountUI() {
 
   if (status === "error") {
     authStatusEl.textContent = "Unable to load account.";
-    paywallCard.classList.remove("hidden");
     portalButton.classList.add("hidden");
-    upgradeLink.classList.add("hidden");
+    getPlanToggle.classList.remove("hidden");
     contactToggle.classList.remove("hidden");
     tokenInfo.classList.add("hidden");
+    paywallCard.classList.toggle("hidden", !isPaywallOpen);
     return;
   }
 
@@ -178,13 +180,21 @@ function updateAccountUI() {
     ? "Trial active."
     : "No active subscription.";
 
-  paywallCard.classList.toggle("hidden", !showPaywall);
+  paywallCard.classList.toggle("hidden", !isPaywallOpen);
   planToggle.classList.toggle("hidden", paid);
   checkoutButton.classList.toggle("hidden", paid);
   addonSection.classList.toggle("hidden", !showAddons);
   portalButton.classList.toggle("hidden", !portalAvailable);
-  upgradeLink.classList.toggle("hidden", !trialActive);
+  getPlanToggle.classList.remove("hidden");
   contactToggle.classList.remove("hidden");
+
+  if (trialActive) {
+    getPlanToggle.classList.add("ghost");
+    getPlanToggle.classList.remove("secondary");
+  } else {
+    getPlanToggle.classList.remove("ghost");
+    getPlanToggle.classList.add("secondary");
+  }
 
   if (paid && typeof minutesLeft === "number") {
     tokenInfo.textContent = `Minutes left: ${minutesLeft}`;
@@ -304,6 +314,27 @@ function setSelectedPlan(plan) {
   });
 }
 
+function updatePanels() {
+  paywallCard.classList.toggle("hidden", !isPaywallOpen);
+  contactForm.classList.toggle("hidden", !isContactOpen);
+}
+
+function setPaywallOpen(open) {
+  isPaywallOpen = open;
+  if (open) {
+    isContactOpen = false;
+  }
+  updatePanels();
+}
+
+function setContactOpen(open) {
+  isContactOpen = open;
+  if (open) {
+    isPaywallOpen = false;
+  }
+  updatePanels();
+}
+
 function setContactStatus(message, isError = false) {
   if (!contactStatus) {
     return;
@@ -314,10 +345,7 @@ function setContactStatus(message, isError = false) {
 }
 
 function toggleContactForm(show) {
-  if (!contactForm) {
-    return;
-  }
-  contactForm.classList.toggle("hidden", !show);
+  setContactOpen(show);
   if (!show) {
     setContactStatus("", false);
     contactStatus.classList.add("hidden");
@@ -1168,6 +1196,12 @@ planOptions.forEach((option) => {
   });
 });
 
+if (getPlanToggle) {
+  getPlanToggle.addEventListener("click", () => {
+    setPaywallOpen(!isPaywallOpen);
+  });
+}
+
 if (checkoutButton) {
   checkoutButton.addEventListener("click", () => {
     openCheckout(selectedPlan || "monthly");
@@ -1183,19 +1217,13 @@ addonOptions.forEach((option) => {
   });
 });
 
-if (upgradeLink) {
-  upgradeLink.addEventListener("click", () => {
-    openCheckout(selectedPlan || "monthly");
-  });
-}
-
 portalButton.addEventListener("click", () => {
   openPortal();
 });
 
 if (contactToggle) {
   contactToggle.addEventListener("click", () => {
-    toggleContactForm(true);
+    setContactOpen(!isContactOpen);
   });
 }
 
@@ -1258,7 +1286,8 @@ document.addEventListener("DOMContentLoaded", () => {
     hintEl.textContent = "AI voice requires server setup.";
   }
   setSelectedPlan(selectedPlan);
-  toggleContactForm(false);
+  setPaywallOpen(false);
+  setContactOpen(false);
   refreshAccount();
   refreshState();
 });
