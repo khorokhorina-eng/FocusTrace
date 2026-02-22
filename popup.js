@@ -84,7 +84,6 @@ let deviceTokenPromise = null;
 let selectedPlan = "annual";
 let isPaywallOpen = false;
 let isContactOpen = false;
-let paywallForced = false;
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -170,15 +169,12 @@ function updateAccountUI() {
     }
     portalButton.classList.add("hidden");
     tokenInfo.classList.add("hidden");
-    paywallForced = false;
     paywallCard.classList.toggle("hidden", !isPaywallOpen);
     return;
   }
 
-  const hasMinutes = typeof minutesLeft === "number" && minutesLeft > 0;
   const noMinutes = typeof minutesLeft === "number" && minutesLeft <= 0;
   const showAddons = paid && noMinutes;
-  paywallForced = noMinutes;
 
   if (billingStatus) {
     billingStatus.textContent = paid
@@ -191,9 +187,6 @@ function updateAccountUI() {
     billingStatus.classList.remove("hidden");
   }
 
-  if (paywallForced) {
-    isPaywallOpen = true;
-  }
   paywallCard.classList.toggle("hidden", !isPaywallOpen);
   planToggle.classList.toggle("hidden", paid);
   checkoutButton.classList.toggle("hidden", paid);
@@ -267,6 +260,10 @@ async function refreshAccount() {
 
 async function openCheckout(plan) {
   if (!isApiConfigured()) {
+    if (billingStatus) {
+      billingStatus.textContent = "Billing is not configured.";
+      billingStatus.classList.remove("hidden");
+    }
     return;
   }
   try {
@@ -297,7 +294,10 @@ async function openCheckout(plan) {
     }
   } catch (error) {
     if (billingStatus) {
-      billingStatus.textContent = "Unable to open checkout.";
+      const message = error?.message
+        ? `Unable to open checkout: ${error.message}`
+        : "Unable to open checkout.";
+      billingStatus.textContent = message;
       billingStatus.classList.remove("hidden");
     }
   }
@@ -335,20 +335,13 @@ function setSelectedPlan(plan) {
 }
 
 function updatePanels() {
-  const shouldShowPaywall = isPaywallOpen || paywallForced;
+  const shouldShowPaywall = isPaywallOpen;
   paywallCard.classList.toggle("hidden", !shouldShowPaywall);
   contactForm.classList.toggle("hidden", !isContactOpen);
-  if (paywallClose) {
-    paywallClose.classList.toggle("hidden", paywallForced);
-  }
 }
 
 function setPaywallOpen(open) {
-  if (paywallForced) {
-    isPaywallOpen = true;
-  } else {
-    isPaywallOpen = open;
-  }
+  isPaywallOpen = open;
   if (open) {
     isContactOpen = false;
   }
@@ -358,9 +351,7 @@ function setPaywallOpen(open) {
 function setContactOpen(open) {
   isContactOpen = open;
   if (open) {
-    if (!paywallForced) {
-      isPaywallOpen = false;
-    }
+    isPaywallOpen = false;
   }
   updatePanels();
 }
@@ -384,6 +375,10 @@ function toggleContactForm(show) {
 
 async function ensureAccess() {
   if (!isApiConfigured()) {
+    if (billingStatus) {
+      billingStatus.textContent = "Billing is not configured.";
+      billingStatus.classList.remove("hidden");
+    }
     return false;
   }
   await refreshAccount();
@@ -396,7 +391,11 @@ async function ensureAccess() {
   if (typeof accountState.minutesLeft === "number" && accountState.minutesLeft > 0) {
     return true;
   }
-  await openCheckout(selectedPlan || "monthly");
+  if (billingStatus) {
+    billingStatus.textContent = "No minutes left. Choose a plan to continue.";
+    billingStatus.classList.remove("hidden");
+  }
+  setPaywallOpen(true);
   return false;
 }
 function isAiAvailable() {
