@@ -25,6 +25,82 @@
         </select>
       </label>
       <p id="hint" class="hint">Open a PDF in Chrome to start.</p>
+      <p id="minutes" class="hint billing-hint"></p>
+
+      <section class="billing">
+        <div class="billing-actions">
+          <button id="togglePlan" class="secondary billing-tab" type="button">
+            Get plan
+          </button>
+          <button id="toggleContact" class="secondary billing-tab" type="button">
+            Contact us
+          </button>
+        </div>
+
+        <section id="planPanel" class="panel hidden" aria-hidden="true">
+          <button
+            id="closePlan"
+            class="panel-close"
+            type="button"
+            aria-label="Close plan panel"
+          >
+            &times;
+          </button>
+          <h2>Unlock all features</h2>
+          <p class="panel-description">
+            Get daily updates, crafted for you. Cancel anytime.
+          </p>
+          <p id="subscriptionState" class="muted">No active subscription.</p>
+          <div class="plan-grid">
+            <button class="plan-card" type="button">
+              <span class="plan-title">Monthly</span>
+              <span class="plan-price">$9.99</span>
+            </button>
+            <button class="plan-card selected" type="button">
+              <span class="plan-title">Annual</span>
+              <span class="plan-badge">Most popular</span>
+              <span class="plan-price">$89.99</span>
+            </button>
+          </div>
+          <button class="primary full-width" type="button">Get plan</button>
+          <hr />
+          <p class="muted">Need extra hours?</p>
+          <div class="hours-grid">
+            <button class="hour-card" type="button">3 hours · $5.99</button>
+            <button class="hour-card" type="button">5 hours · $8.99</button>
+            <button class="hour-card" type="button">10 hours · $15.99</button>
+            <button class="hour-card" type="button">20 hours · $27.99</button>
+          </div>
+        </section>
+
+        <section id="contactPanel" class="panel hidden" aria-hidden="true">
+          <button
+            id="closeContact"
+            class="panel-close"
+            type="button"
+            aria-label="Close contact panel"
+          >
+            &times;
+          </button>
+          <h2>Contact us</h2>
+          <label class="field">
+            Email
+            <input id="contactEmail" type="email" placeholder="you@email.com" />
+          </label>
+          <label class="field">
+            Message
+            <textarea
+              id="contactMessage"
+              rows="4"
+              placeholder="How can we help?"
+            ></textarea>
+          </label>
+          <button id="sendContact" class="primary full-width" type="button">
+            Send message
+          </button>
+          <p id="contactStatus" class="hint"></p>
+        </section>
+      </section>
     </main>
     <script src="popup.js"></script>
   </body>

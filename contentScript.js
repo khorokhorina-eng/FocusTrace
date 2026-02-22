@@ -1,3 +1,9 @@
+const FREE_MINUTES_LIMIT_MS = 15 * 60 * 1000;
+const STORAGE_KEYS = {
+  freeUsageMs: "freeUsageMs",
+  subscriptionActive: "subscriptionActive",
+};
+
 const state = {
   status: "idle",
   speed: 1,
@@ -6,6 +12,11 @@ const state = {
   totalChunks: 0,
   currentChunk: 0,
   language: "",
+  freeUsageMs: 0,
+  freeMinutesLeftMs: FREE_MINUTES_LIMIT_MS,
+  freeMinutesTotalMs: FREE_MINUTES_LIMIT_MS,
+  isSubscribed: false,
+  paywallRequired: false,
 };
 
 const pdfjs = window.pdfjsLib;
@@ -17,6 +28,13 @@ let restartOnResume = false;
 let detectedLanguage = "";
 let selectedVoice = null;
 let availableVoices = [];
+
+let freeUsageMs = 0;
+let subscriptionActive = false;
+let billingLoaded = false;
+let usageSessionStartedAt = null;
+let usageTicker = null;
+let limitHandlingInProgress = false;
 
 if (pdfjs?.GlobalWorkerOptions) {
   pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
@@ -36,7 +54,147 @@ if (speechSynthesis.onvoiceschanged !== undefined) {
 }
 refreshVoices();
 
+function getStorage(keys) {
+  return new Promise((resolve) => {
+    if (!chrome?.storage?.local) {
+      resolve({});
+      return;
+    }
+    chrome.storage.local.get(keys, (result) => {
+      if (chrome.runtime.lastError) {
+        resolve({});
+        return;
+      }
+      resolve(result || {});
+    });
+  });
+}
+
+function setStorage(values) {
+  return new Promise((resolve) => {
+    if (!chrome?.storage?.local) {
+      resolve();
+      return;
+    }
+    chrome.storage.local.set(values, () => {
+      resolve();
+    });
+  });
+}
+
+function getUsageWithCurrentSessionMs() {
+  if (!usageSessionStartedAt) {
+    return freeUsageMs;
+  }
+  return freeUsageMs + Math.max(Date.now() - usageSessionStartedAt, 0);
+}
+
+function getFreeMinutesLeftMs() {
+  return Math.max(FREE_MINUTES_LIMIT_MS - getUsageWithCurrentSessionMs(), 0);
+}
+
+function isPaywallRequired() {
+  return !subscriptionActive && getFreeMinutesLeftMs() <= 0;
+}
+
+function syncBillingState() {
+  state.freeUsageMs = Math.floor(getUsageWithCurrentSessionMs());
+  state.freeMinutesLeftMs = getFreeMinutesLeftMs();
+  state.freeMinutesTotalMs = FREE_MINUTES_LIMIT_MS;
+  state.isSubscribed = subscriptionActive;
+  state.paywallRequired = isPaywallRequired();
+}
+
+async function ensureBillingLoaded() {
+  if (billingLoaded) {
+    return;
+  }
+  const stored = await getStorage([
+    STORAGE_KEYS.freeUsageMs,
+    STORAGE_KEYS.subscriptionActive,
+  ]);
+  const usageCandidate = Number(stored[STORAGE_KEYS.freeUsageMs]);
+  freeUsageMs = Number.isFinite(usageCandidate) ? Math.max(usageCandidate, 0) : 0;
+  subscriptionActive = Boolean(stored[STORAGE_KEYS.subscriptionActive]);
+  billingLoaded = true;
+  syncBillingState();
+}
+
+async function persistUsage() {
+  await setStorage({
+    [STORAGE_KEYS.freeUsageMs]: Math.floor(freeUsageMs),
+  });
+}
+
+function startUsageSession() {
+  if (subscriptionActive || usageSessionStartedAt || state.status !== "reading") {
+    return;
+  }
+  usageSessionStartedAt = Date.now();
+  syncBillingState();
+}
+
+async function flushUsageSession({ persist = true } = {}) {
+  if (!usageSessionStartedAt) {
+    syncBillingState();
+    return;
+  }
+  const elapsedMs = Math.max(Date.now() - usageSessionStartedAt, 0);
+  usageSessionStartedAt = null;
+  freeUsageMs += elapsedMs;
+  if (!subscriptionActive) {
+    freeUsageMs = Math.min(freeUsageMs, FREE_MINUTES_LIMIT_MS);
+  }
+  syncBillingState();
+  if (persist) {
+    await persistUsage();
+  }
+}
+
+function clearUsageTicker() {
+  if (usageTicker) {
+    clearInterval(usageTicker);
+    usageTicker = null;
+  }
+}
+
+async function handleLimitReached() {
+  if (state.status === "limited" || limitHandlingInProgress) {
+    return;
+  }
+  limitHandlingInProgress = true;
+  try {
+    cancelSpeech();
+    clearUsageTicker();
+    await flushUsageSession({ persist: true });
+    currentChunkIndex = 0;
+    state.currentChunk = 0;
+    setStatus("limited", "Free minutes are over. Upgrade to continue reading.");
+  } finally {
+    limitHandlingInProgress = false;
+  }
+}
+
+function ensureUsageTicker() {
+  if (usageTicker) {
+    return;
+  }
+  usageTicker = setInterval(() => {
+    if (state.status !== "reading") {
+      clearUsageTicker();
+      return;
+    }
+    syncBillingState();
+    if (isPaywallRequired()) {
+      handleLimitReached();
+      return;
+    }
+    sendStateUpdate();
+  }, 1000);
+}
+
 function sendStateUpdate() {
+  syncBillingState();
   chrome.runtime.sendMessage({ type: "stateUpdate", state });
 }
 
@@ -206,7 +364,7 @@ function createUtterance(text) {
   return utterance;
 }
 
-function handleUtteranceEnd() {
+async function handleUtteranceEnd() {
   if (skipNextEnd) {
     skipNextEnd = false;
     return;
@@ -217,17 +375,25 @@ function handleUtteranceEnd() {
   currentChunkIndex += 1;
   if (currentChunkIndex >= textChunks.length) {
     state.currentChunk = textChunks.length;
+    clearUsageTicker();
+    await flushUsageSession({ persist: true });
     setStatus("finished", "");
     return;
   }
   speakCurrentChunk();
 }
 
-function handleUtteranceError() {
+async function handleUtteranceError() {
+  clearUsageTicker();
+  await flushUsageSession({ persist: true });
   setStatus("error", "Speech stopped unexpectedly.");
 }
 
 function speakCurrentChunk() {
+  if (isPaywallRequired()) {
+    handleLimitReached();
+    return;
+  }
   if (!textChunks.length) {
     setStatus("error", "No text available to read.");
     return;
@@ -258,11 +424,17 @@ function cancelSpeech() {
 }
 
 async function startReading() {
+  await ensureBillingLoaded();
+  if (isPaywallRequired()) {
+    setStatus("limited", "Free minutes are over. Upgrade to continue reading.");
+    return;
+  }
+
   if (state.status === "reading") {
     return;
   }
   if (state.status === "paused") {
-    resumeReading();
+    await resumeReading();
     return;
   }
 
@@ -274,29 +446,40 @@ async function startReading() {
     }
   }
 
-  if (state.status === "finished" || state.status === "idle") {
+  if (state.status === "finished" || state.status === "idle" || state.status === "limited") {
     currentChunkIndex = 0;
   }
 
   cancelSpeech();
   state.currentChunk = currentChunkIndex + 1;
   setStatus("reading", "");
+  startUsageSession();
+  ensureUsageTicker();
   speakCurrentChunk();
 }
 
-function pauseReading() {
+async function pauseReading() {
   if (state.status !== "reading") {
     return;
   }
   speechSynthesis.pause();
+  clearUsageTicker();
+  await flushUsageSession({ persist: true });
   setStatus("paused", "");
 }
 
-function resumeReading() {
+async function resumeReading() {
+  await ensureBillingLoaded();
   if (state.status !== "paused") {
     return;
   }
+  if (isPaywallRequired()) {
+    setStatus("limited", "Free minutes are over. Upgrade to continue reading.");
+    return;
+  }
   setStatus("reading", "");
+  startUsageSession();
+  ensureUsageTicker();
   if (restartOnResume) {
     restartOnResume = false;
     cancelSpeech();
@@ -306,8 +489,10 @@ function resumeReading() {
   speechSynthesis.resume();
 }
 
-function stopReading() {
+async function stopReading() {
   cancelSpeech();
+  clearUsageTicker();
+  await flushUsageSession({ persist: true });
   currentChunkIndex = 0;
   state.currentChunk = 0;
   setStatus("idle", "");
@@ -331,13 +516,13 @@ function setSpeed(speed) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message?.type) {
-    sendResponse({ state });
-    return false;
+    ensureBillingLoaded().then(() => sendResponse({ state }));
+    return true;
   }
 
   if (message.type === "getState") {
-    sendResponse({ state });
-    return false;
+    ensureBillingLoaded().then(() => sendResponse({ state }));
+    return true;
   }
 
   if (message.type === "start") {
@@ -346,21 +531,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "pause") {
-    pauseReading();
-    sendResponse({ state });
-    return false;
+    pauseReading().then(() => sendResponse({ state }));
+    return true;
   }
 
   if (message.type === "resume") {
-    resumeReading();
-    sendResponse({ state });
-    return false;
+    resumeReading().then(() => sendResponse({ state }));
+    return true;
   }
 
   if (message.type === "stop") {
-    stopReading();
-    sendResponse({ state });
-    return false;
+    stopReading().then(() => sendResponse({ state }));
+    return true;
   }
 
   if (message.type === "setSpeed") {
@@ -373,6 +555,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+if (chrome?.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local") {
+      return;
+    }
+
+    let shouldSync = false;
+
+    if (changes[STORAGE_KEYS.freeUsageMs]) {
+      const usageCandidate = Number(changes[STORAGE_KEYS.freeUsageMs].newValue);
+      freeUsageMs = Number.isFinite(usageCandidate) ? Math.max(usageCandidate, 0) : 0;
+      shouldSync = true;
+    }
+
+    if (changes[STORAGE_KEYS.subscriptionActive]) {
+      subscriptionActive = Boolean(changes[STORAGE_KEYS.subscriptionActive].newValue);
+      shouldSync = true;
+    }
+
+    if (!shouldSync) {
+      return;
+    }
+
+    syncBillingState();
+
+    if (subscriptionActive && state.status === "limited") {
+      setStatus("idle", "");
+      return;
+    }
+
+    if (isPaywallRequired() && state.status === "reading") {
+      handleLimitReached();
+      return;
+    }
+
+    sendStateUpdate();
+  });
+}
+
+ensureBillingLoaded().then(() => {
+  sendStateUpdate();
+});
+
 window.addEventListener("beforeunload", () => {
+  clearUsageTicker();
+  flushUsageSession({ persist: true });
   speechSynthesis.cancel();
 });

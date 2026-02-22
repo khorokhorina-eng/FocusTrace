@@ -7,7 +7,7 @@
     "default_title": "PDF Text to Speech",
     "default_popup": "popup.html"
   },
-  "permissions": ["activeTab"],
+  "permissions": ["activeTab", "storage"],
   "host_permissions": [
     "*://*/*.pdf",
     "*://*/*.PDF",
