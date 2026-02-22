@@ -86,6 +86,11 @@ button:disabled {
   color: #64748b;
 }
 
+.cta-row {
+  display: flex;
+  gap: 8px;
+}
+
 .paywall-card {
   border: 1px solid #e2e8f0;
   border-radius: 16px;

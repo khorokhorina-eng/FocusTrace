@@ -26,11 +26,15 @@
           <option value="1.5">1.5x</option>
         </select>
       </label>
-      <button id="subscribeButton" class="secondary full-width">
-        Subscribe
-      </button>
+      <div class="cta-row">
+        <button id="getPlanToggle" class="secondary small">
+          Get plan
+        </button>
+        <button id="contactToggle" class="ghost small">
+          Contact us
+        </button>
+      </div>
       <div id="account" class="account">
-        <p id="authStatus" class="account-status">Checking access...</p>
         <div id="paywallCard" class="paywall-card hidden">
           <div class="paywall-header">
             <h2>Unlock all features</h2>
@@ -46,6 +50,7 @@
           <p class="paywall-subtitle">
             Get daily updates, crafted for you. Cancel anytime.
           </p>
+          <p id="billingStatus" class="hint hidden"></p>
           <div id="planToggle" class="plan-toggle">
             <button type="button" class="plan-option" data-plan="monthly">
               <span>Monthly</span>
@@ -81,14 +86,6 @@
               </button>
             </div>
           </div>
-        </div>
-        <div class="account-links">
-          <button id="getPlanToggle" class="secondary small hidden">
-            Get plan
-          </button>
-          <button id="contactToggle" class="ghost small hidden">
-            Contact us
-          </button>
           <button id="portalButton" class="secondary small hidden">
             Manage subscription
           </button>

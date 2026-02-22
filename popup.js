@@ -6,18 +6,17 @@ const stopBtn = document.getElementById("stop");
 const speedSelect = document.getElementById("speed");
 const openFileBtn = document.getElementById("openFile");
 const fileInput = document.getElementById("fileInput");
-const authStatusEl = document.getElementById("authStatus");
-const subscribeButton = document.getElementById("subscribeButton");
+const getPlanToggle = document.getElementById("getPlanToggle");
+const contactToggle = document.getElementById("contactToggle");
 const paywallCard = document.getElementById("paywallCard");
 const paywallClose = document.getElementById("paywallClose");
+const billingStatus = document.getElementById("billingStatus");
 const planToggle = document.getElementById("planToggle");
 const checkoutButton = document.getElementById("checkoutButton");
 const addonSection = document.getElementById("addonSection");
 const addonOptions = Array.from(document.querySelectorAll(".addon-option"));
 const planOptions = Array.from(document.querySelectorAll(".plan-option"));
-const getPlanToggle = document.getElementById("getPlanToggle");
 const portalButton = document.getElementById("portalButton");
-const contactToggle = document.getElementById("contactToggle");
 const contactForm = document.getElementById("contactForm");
 const contactEmail = document.getElementById("contactEmail");
 const contactMessage = document.getElementById("contactMessage");
@@ -142,36 +141,36 @@ function updateAccountUI() {
   const { status, paid, minutesLeft, trialActive, portalAvailable } =
     accountState;
   if (!isApiConfigured()) {
-    authStatusEl.textContent = "Billing not configured.";
+    if (billingStatus) {
+      billingStatus.textContent = "Billing not configured.";
+      billingStatus.classList.remove("hidden");
+    }
     paywallCard.classList.add("hidden");
     portalButton.classList.add("hidden");
-    getPlanToggle.classList.add("hidden");
-    contactToggle.classList.add("hidden");
-    subscribeButton.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
 
   if (status === "loading") {
-    authStatusEl.textContent = "Checking access...";
+    if (billingStatus) {
+      billingStatus.textContent = "Checking access...";
+      billingStatus.classList.remove("hidden");
+    }
     paywallCard.classList.add("hidden");
     portalButton.classList.add("hidden");
-    getPlanToggle.classList.add("hidden");
-    contactToggle.classList.add("hidden");
-    subscribeButton.classList.add("hidden");
     tokenInfo.classList.add("hidden");
     return;
   }
 
   if (status === "error") {
-    authStatusEl.textContent = "Unable to load account.";
+    if (billingStatus) {
+      billingStatus.textContent = "Unable to load account.";
+      billingStatus.classList.remove("hidden");
+    }
     portalButton.classList.add("hidden");
-    getPlanToggle.classList.remove("hidden");
-    contactToggle.classList.remove("hidden");
     tokenInfo.classList.add("hidden");
     paywallForced = false;
     paywallCard.classList.toggle("hidden", !isPaywallOpen);
-    subscribeButton.classList.remove("hidden");
     return;
   }
 
@@ -180,13 +179,16 @@ function updateAccountUI() {
   const showAddons = paid && noMinutes;
   paywallForced = noMinutes;
 
-  authStatusEl.textContent = paid
-    ? noMinutes
-      ? "Subscription active. No minutes left."
-      : "Subscription active."
-    : trialActive
-    ? "Trial active."
-    : "No active subscription.";
+  if (billingStatus) {
+    billingStatus.textContent = paid
+      ? noMinutes
+        ? "Subscription active. No minutes left."
+        : "Subscription active."
+      : trialActive
+      ? "Trial active."
+      : "No active subscription.";
+    billingStatus.classList.remove("hidden");
+  }
 
   if (paywallForced) {
     isPaywallOpen = true;
@@ -196,10 +198,6 @@ function updateAccountUI() {
   checkoutButton.classList.toggle("hidden", paid);
   addonSection.classList.toggle("hidden", !showAddons);
   portalButton.classList.toggle("hidden", !portalAvailable);
-  getPlanToggle.classList.remove("hidden");
-  contactToggle.classList.remove("hidden");
-  subscribeButton.classList.toggle("hidden", paywallForced && paid);
-
   if (trialActive) {
     getPlanToggle.classList.add("ghost");
     getPlanToggle.classList.remove("secondary");
@@ -286,7 +284,10 @@ async function openCheckout(plan) {
       } catch (error) {
         // ignore parsing
       }
-      authStatusEl.textContent = message;
+      if (billingStatus) {
+        billingStatus.textContent = message;
+        billingStatus.classList.remove("hidden");
+      }
       return;
     }
     const data = await response.json();
@@ -294,7 +295,10 @@ async function openCheckout(plan) {
       chrome.tabs.create({ url: data.url });
     }
   } catch (error) {
-    authStatusEl.textContent = "Unable to open checkout.";
+    if (billingStatus) {
+      billingStatus.textContent = "Unable to open checkout.";
+      billingStatus.classList.remove("hidden");
+    }
   }
 }
 
@@ -315,7 +319,10 @@ async function openPortal() {
       chrome.tabs.create({ url: data.url });
     }
   } catch (error) {
-    authStatusEl.textContent = "Unable to open portal.";
+    if (billingStatus) {
+      billingStatus.textContent = "Unable to open portal.";
+      billingStatus.classList.remove("hidden");
+    }
   }
 }
 
@@ -1221,12 +1228,6 @@ planOptions.forEach((option) => {
 if (getPlanToggle) {
   getPlanToggle.addEventListener("click", () => {
     setPaywallOpen(!isPaywallOpen);
-  });
-}
-
-if (subscribeButton) {
-  subscribeButton.addEventListener("click", () => {
-    setPaywallOpen(true);
   });
 }
 
