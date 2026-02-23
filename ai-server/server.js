@@ -238,6 +238,29 @@ function getPlanByPriceId(priceId) {
   return Object.values(PRICE_CONFIG).find((plan) => plan.priceId === priceId);
 }
 
+function isLoopbackRequest(req) {
+  const host = String(req.hostname || "").toLowerCase();
+  const ip = String(req.ip || "").toLowerCase();
+  const forwarded = String(req.headers["x-forwarded-for"] || "")
+    .toLowerCase()
+    .split(",")[0]
+    .trim();
+  const loopbackHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+  const loopbackIps = new Set([
+    "127.0.0.1",
+    "::1",
+    "::ffff:127.0.0.1",
+    "localhost",
+  ]);
+  return (
+    loopbackHosts.has(host) || loopbackIps.has(ip) || loopbackIps.has(forwarded)
+  );
+}
+
+function canUseDevEndpoints(req) {
+  return ENABLE_DEV_ENDPOINTS || isLoopbackRequest(req);
+}
+
 function getMailer() {
   if (!SMTP_HOST) {
     return null;
@@ -261,6 +284,7 @@ app.get("/health", (_req, res) => {
     stripeConfigured: missingStripeEnv.length === 0,
     supportEmailConfigured: Boolean(SMTP_HOST),
     freeMinutes: FREE_MINUTES,
+    devEndpointsEnabled: ENABLE_DEV_ENDPOINTS,
     missingStripeEnv,
   });
 });
@@ -281,8 +305,8 @@ app.get("/me", (req, res) => {
   });
 });
 
-app.post("/dev/reset-trial", (req, res) => {
-  if (!ENABLE_DEV_ENDPOINTS) {
+function handleDevResetTrial(req, res) {
+  if (!canUseDevEndpoints(req)) {
     res.status(404).json({ error: "Not found" });
     return;
   }
@@ -310,7 +334,10 @@ app.post("/dev/reset-trial", (req, res) => {
     plan: null,
     devMode: true,
   });
-});
+}
+
+app.post("/dev/reset-trial", handleDevResetTrial);
+app.get("/dev/reset-trial", handleDevResetTrial);
 
 app.post("/checkout", async (req, res) => {
   if (!stripe) {

@@ -353,12 +353,22 @@ async function resetTrialForTesting() {
   if (!isApiConfigured()) {
     return;
   }
+  setPaywallOpen(true);
+  if (billingStatus) {
+    billingStatus.textContent = "Resetting test minutes...";
+    billingStatus.classList.remove("hidden");
+  }
   try {
-    const response = await apiFetch("/dev/reset-trial", {
+    let response = await apiFetch("/dev/reset-trial", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ minutes: 5 }),
     });
+    if (response.status === 404 || response.status === 405) {
+      response = await apiFetch("/dev/reset-trial?minutes=5", {
+        method: "GET",
+      });
+    }
     if (!response.ok) {
       let errorMessage = "Unable to reset test minutes.";
       try {
@@ -373,12 +383,14 @@ async function resetTrialForTesting() {
         billingStatus.textContent = errorMessage;
         billingStatus.classList.remove("hidden");
       }
+      hintEl.textContent = errorMessage;
       return;
     }
     if (billingStatus) {
       billingStatus.textContent = "Test minutes reset to 5.";
       billingStatus.classList.remove("hidden");
     }
+    hintEl.textContent = "Test minutes reset to 5.";
     await refreshAccount();
   } catch (error) {
     if (billingStatus) {
@@ -386,6 +398,7 @@ async function resetTrialForTesting() {
         "Unable to reset test minutes. Is ai-server running?";
       billingStatus.classList.remove("hidden");
     }
+    hintEl.textContent = "Unable to reset test minutes. Is ai-server running?";
   }
 }
 
