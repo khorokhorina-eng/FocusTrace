@@ -17,6 +17,7 @@ function toPositiveInt(value, fallback) {
 
 const app = express();
 const PORT = process.env.PORT || 8787;
+const HOST = process.env.HOST || "0.0.0.0";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_TTS_MODEL = process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
 const OPENAI_TTS_VOICE = process.env.OPENAI_TTS_VOICE || "alloy";
@@ -639,6 +640,6 @@ app.post(
   }
 );
 
-app.listen(PORT, () => {
-  console.log(`AI TTS server listening on http://localhost:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`AI TTS server listening on http://${HOST}:${PORT}`);
 });

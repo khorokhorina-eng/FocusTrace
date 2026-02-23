@@ -19,6 +19,7 @@ OPENAI_API_KEY=your_openai_api_key
 OPENAI_TTS_MODEL=gpt-4o-mini-tts
 OPENAI_TTS_VOICE=alloy
 PORT=8787
+HOST=0.0.0.0
 
 # Stripe
 STRIPE_SECRET_KEY=sk_live_...
