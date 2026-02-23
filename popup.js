@@ -353,11 +353,7 @@ async function resetTrialForTesting() {
   if (!isApiConfigured()) {
     return;
   }
-  setPaywallOpen(true);
-  if (billingStatus) {
-    billingStatus.textContent = "Resetting test minutes...";
-    billingStatus.classList.remove("hidden");
-  }
+  hintEl.textContent = "Resetting test minutes...";
   try {
     let response = await apiFetch("/dev/reset-trial", {
       method: "POST",
@@ -387,11 +383,12 @@ async function resetTrialForTesting() {
       return;
     }
     if (billingStatus) {
-      billingStatus.textContent = "Test minutes reset to 5.";
-      billingStatus.classList.remove("hidden");
+      billingStatus.classList.add("hidden");
     }
     hintEl.textContent = "Test minutes reset to 5.";
     await refreshAccount();
+    setContactOpen(false);
+    setPaywallOpen(false);
   } catch (error) {
     if (billingStatus) {
       billingStatus.textContent =
@@ -439,12 +436,22 @@ function updatePanels() {
   contactForm.classList.toggle("hidden", !isContactOpen);
 }
 
+function revealPanel(panelEl) {
+  if (!panelEl || panelEl.classList.contains("hidden")) {
+    return;
+  }
+  panelEl.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
 function setPaywallOpen(open) {
   isPaywallOpen = open;
   if (open) {
     isContactOpen = false;
   }
   updatePanels();
+  if (open) {
+    revealPanel(paywallCard);
+  }
 }
 
 function setContactOpen(open) {
@@ -453,6 +460,9 @@ function setContactOpen(open) {
     isPaywallOpen = false;
   }
   updatePanels();
+  if (open) {
+    revealPanel(contactForm);
+  }
 }
 
 function setContactStatus(message, isError = false) {
@@ -540,7 +550,6 @@ function updateUI(state, nextMode = mode) {
   }
 
   if (state.status === "limited") {
-    setPaywallOpen(true);
     refreshAccount();
   }
 }
@@ -1329,7 +1338,7 @@ planOptions.forEach((option) => {
 
 if (getPlanToggle) {
   getPlanToggle.addEventListener("click", () => {
-    setPaywallOpen(!isPaywallOpen);
+    setPaywallOpen(true);
   });
 }
 
@@ -1354,7 +1363,7 @@ portalButton.addEventListener("click", () => {
 
 if (contactToggle) {
   contactToggle.addEventListener("click", () => {
-    setContactOpen(!isContactOpen);
+    setContactOpen(true);
   });
 }
 

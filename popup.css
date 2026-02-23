@@ -8,6 +8,8 @@ body {
   background: #f8fafc;
   color: #0f172a;
   width: 420px;
+  max-height: 600px;
+  overflow-y: auto;
 }
 
 .container {
