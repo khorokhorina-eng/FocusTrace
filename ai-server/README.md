@@ -63,6 +63,23 @@ The server will listen on:
 http://localhost:8787/tts
 ```
 
+### Keep server always running on macOS (recommended)
+
+Use LaunchAgent so server starts on login and auto-restarts on crashes:
+
+```bash
+cd ~/FocusTrace/ai-server
+chmod +x scripts/macos/install-launchagent.sh scripts/macos/uninstall-launchagent.sh
+./scripts/macos/install-launchagent.sh
+```
+
+To remove the service:
+
+```bash
+cd ~/FocusTrace/ai-server
+./scripts/macos/uninstall-launchagent.sh
+```
+
 ## 4) Update the extension
 
 Edit `config.js` in the extension root:
