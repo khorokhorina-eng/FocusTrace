@@ -325,6 +325,7 @@ function handleDevResetTrial(req, res) {
     subscription_status: null,
     plan: null,
     stripe_subscription_id: null,
+    stripe_customer_id: null,
   });
   const user = getUser(deviceToken);
   res.json({
@@ -358,29 +359,53 @@ app.post("/checkout", async (req, res) => {
   }
 
   const user = getOrCreateUser(deviceToken);
+  const baseCheckoutPayload = {
+    mode: plan.mode,
+    line_items: [{ price: plan.priceId, quantity: 1 }],
+    success_url: STRIPE_SUCCESS_URL,
+    cancel_url: STRIPE_CANCEL_URL,
+    client_reference_id: deviceToken,
+    metadata: {
+      device_token: deviceToken,
+      plan: plan.plan,
+    },
+    subscription_data:
+      plan.mode === "subscription"
+        ? {
+            metadata: {
+              device_token: deviceToken,
+              plan: plan.plan,
+            },
+          }
+        : undefined,
+    allow_promotion_codes: true,
+  };
+
   try {
-    const session = await stripe.checkout.sessions.create({
-      mode: plan.mode,
-      line_items: [{ price: plan.priceId, quantity: 1 }],
-      success_url: STRIPE_SUCCESS_URL,
-      cancel_url: STRIPE_CANCEL_URL,
-      client_reference_id: deviceToken,
-      metadata: {
-        device_token: deviceToken,
-        plan: plan.plan,
-      },
-      subscription_data:
-        plan.mode === "subscription"
-          ? {
-              metadata: {
-                device_token: deviceToken,
-                plan: plan.plan,
-              },
-            }
-          : undefined,
-      customer: user.stripe_customer_id || undefined,
-      allow_promotion_codes: true,
-    });
+    let session;
+    const customerId = user.stripe_customer_id || null;
+    if (customerId) {
+      try {
+        session = await stripe.checkout.sessions.create({
+          ...baseCheckoutPayload,
+          customer: customerId,
+        });
+      } catch (error) {
+        const message = String(error?.message || "");
+        const missingCustomer =
+          error?.code === "resource_missing" ||
+          message.includes("No such customer");
+        if (!missingCustomer) {
+          throw error;
+        }
+        // Stored customer can become stale after account/key migration.
+        updateUser(deviceToken, { stripe_customer_id: null });
+        session = await stripe.checkout.sessions.create(baseCheckoutPayload);
+      }
+    } else {
+      session = await stripe.checkout.sessions.create(baseCheckoutPayload);
+    }
+
     res.json({ url: session.url });
   } catch (error) {
     console.error("Stripe checkout error:", error?.message || error);
