@@ -408,9 +408,18 @@ app.post("/checkout", async (req, res) => {
 
     res.json({ url: session.url });
   } catch (error) {
-    console.error("Stripe checkout error:", error?.message || error);
+    const checkoutErrorMessage =
+      error?.raw?.message || error?.message || "Unable to create checkout session";
+    console.error(
+      "Stripe checkout error:",
+      checkoutErrorMessage,
+      `code=${error?.code || "n/a"}`,
+      `type=${error?.type || "n/a"}`
+    );
     res.status(500).json({
-      error: error?.message || "Unable to create checkout session",
+      error: checkoutErrorMessage,
+      code: error?.code || null,
+      type: error?.type || null,
     });
   }
 });
