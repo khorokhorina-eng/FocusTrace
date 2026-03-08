@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "tts-proxy": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -18,6 +19,7 @@
   },
   "homepage": "https://github.com/khorokhorina-eng/FocusTrace#readme",
   "dependencies": {
-    "pdfjs-dist": "^5.4.530"
+    "pdfjs-dist": "^3.11.174",
+    "stripe": "^20.4.0"
   }
 }
