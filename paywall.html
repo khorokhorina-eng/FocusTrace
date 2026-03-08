@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Upgrade - PDF Text to Speech</title>
+    <style>
+      * { box-sizing: border-box; }
+      :root {
+        --bg: #f8fafc;
+        --panel: #ffffff;
+        --text: #0f172a;
+        --muted: #475569;
+        --line: #dbeafe;
+        --line-strong: #2563eb;
+        --primary: #2563eb;
+        --primary-dark: #1d4ed8;
+        --success-bg: #dcfce7;
+        --success-text: #166534;
+        --info-bg: #e2e8f0;
+      }
+      body {
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        background:
+          radial-gradient(circle at top, rgba(37, 99, 235, 0.10), transparent 36%),
+          var(--bg);
+        color: var(--text);
+      }
+      .page {
+        max-width: 1040px;
+        margin: 28px auto;
+        padding: 0 18px 28px;
+      }
+      .header {
+        margin-bottom: 18px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 32px;
+      }
+      .muted {
+        margin: 0;
+        color: var(--muted);
+      }
+      .status {
+        margin: 12px 0 18px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: var(--info-bg);
+        color: #1e293b;
+        font-size: 14px;
+      }
+      .status.ok {
+        background: var(--success-bg);
+        color: var(--success-text);
+      }
+      .plans {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+      }
+      .plan {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--panel);
+        padding: 18px;
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+      }
+      .plan.featured {
+        border-color: var(--line-strong);
+        transform: translateY(-4px);
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 0 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        background: #dbeafe;
+        color: #1d4ed8;
+        margin-bottom: 12px;
+      }
+      .eyebrow.empty {
+        visibility: hidden;
+      }
+      .plan h2 {
+        margin: 0 0 8px;
+        font-size: 22px;
+      }
+      .price {
+        font-size: 30px;
+        font-weight: 700;
+        margin: 0 0 6px;
+      }
+      .period {
+        color: #64748b;
+        margin: 0 0 10px;
+      }
+      .desc {
+        color: #334155;
+        margin: 0 0 14px;
+        min-height: 44px;
+      }
+      ul {
+        margin: 0 0 16px;
+        padding-left: 18px;
+        color: #334155;
+      }
+      li + li {
+        margin-top: 6px;
+      }
+      button {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid var(--primary);
+        background: var(--primary);
+        color: #fff;
+        font-weight: 700;
+        padding: 11px 12px;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) {
+        background: var(--primary-dark);
+        border-color: var(--primary-dark);
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.65;
+      }
+      .secondary {
+        background: #fff;
+        color: #1e293b;
+        border-color: #cbd5f5;
+      }
+      .footer-actions {
+        margin-top: 16px;
+        display: flex;
+        gap: 10px;
+      }
+      .small {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #64748b;
+      }
+      @media (max-width: 720px) {
+        .plan.featured {
+          transform: none;
+        }
+        .footer-actions {
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="header">
+        <h1>Choose your plan</h1>
+        <p class="muted">Static pricing, simple checkout, and no dynamic plan loading.</p>
+      </header>
+
+      <div id="status" class="status">Checking subscription status...</div>
+
+      <section class="plans">
+        <article class="plan featured" data-plan-id="monthly">
+          <div class="eyebrow">Most flexible</div>
+          <h2>Monthly plan</h2>
+          <p class="price">$9.99</p>
+          <p class="period">per month</p>
+          <p class="desc">For regular use with full playback access.</p>
+          <ul>
+            <li>Unlimited playback</li>
+            <li>Full PDF access</li>
+            <li>Cancel anytime</li>
+          </ul>
+          <button data-plan-id="monthly">Upgrade</button>
+        </article>
+
+        <article class="plan" data-plan-id="yearly">
+          <div class="eyebrow">Best value</div>
+          <h2>Yearly plan</h2>
+          <p class="price">$89.99</p>
+          <p class="period">per year</p>
+          <p class="desc">Best price for long-term use.</p>
+          <ul>
+            <li>Unlimited playback</li>
+            <li>Full PDF access</li>
+            <li>Save versus monthly billing</li>
+          </ul>
+          <button data-plan-id="yearly">Upgrade</button>
+        </article>
+      </section>
+
+      <div class="footer-actions">
+        <button id="refresh" class="secondary">Refresh subscription status</button>
+        <button id="close" class="secondary">Close</button>
+      </div>
+      <p class="small">Checkout is powered by Stripe Checkout.</p>
+    </main>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const refreshBtn = document.getElementById("refresh");
+      const closeBtn = document.getElementById("close");
+      const planButtons = Array.from(document.querySelectorAll("button[data-plan-id]"));
+
+      let currentSubscription = { active: false, plan: null };
+
+      function setStatus(text, ok = false) {
+        statusEl.textContent = text;
+        statusEl.classList.toggle("ok", ok);
+      }
+
+      function sendMessage(message) {
+        return new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage(message, (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            if (!response?.ok) {
+              reject(new Error(response?.error || "Request failed."));
+              return;
+            }
+            resolve(response);
+          });
+        });
+      }
+
+      function updateButtons() {
+        const activePlanId = currentSubscription?.plan?.planId || "";
+
+        planButtons.forEach((button) => {
+          const planId = button.dataset.planId || "";
+          const isCurrentPlan = currentSubscription?.active && activePlanId === planId;
+          button.disabled = isCurrentPlan;
+          button.textContent = isCurrentPlan ? "Current plan" : "Upgrade";
+        });
+      }
+
+      async function openCheckout(planId, button) {
+        if (!planId) {
+          return;
+        }
+
+        const initialLabel = button.textContent;
+        button.disabled = true;
+        button.textContent = "Redirecting...";
+
+        try {
+          const result = await sendMessage({
+            type: "createCheckoutSession",
+            planId,
+          });
+
+          if (!result.url) {
+            throw new Error("Checkout URL is missing.");
+          }
+
+          window.open(result.url, "_blank");
+          setStatus("Stripe Checkout opened in a new tab.");
+        } catch (error) {
+          setStatus(error.message || "Unable to open checkout.");
+        } finally {
+          updateButtons();
+          if (button.textContent === "Redirecting...") {
+            button.textContent = initialLabel;
+            updateButtons();
+          }
+        }
+      }
+
+      async function loadSubscriptionStatus() {
+        setStatus("Checking subscription status...");
+
+        try {
+          const result = await sendMessage({ type: "refreshSubscriptionStatus" });
+          currentSubscription = result || { active: false, plan: null };
+          updateButtons();
+
+          if (currentSubscription.active) {
+            const planName =
+              currentSubscription.plan?.planId === "yearly" ? "Yearly plan" : "Monthly plan";
+            setStatus(`Subscription active. Current plan: ${planName}.`, true);
+            return;
+          }
+
+          setStatus("No active subscription detected.");
+        } catch (error) {
+          currentSubscription = { active: false, plan: null };
+          updateButtons();
+          setStatus(error.message || "Failed to refresh subscription status.");
+        }
+      }
+
+      planButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          openCheckout(button.dataset.planId || "", button);
+        });
+      });
+
+      refreshBtn.addEventListener("click", () => {
+        loadSubscriptionStatus();
+      });
+
+      closeBtn.addEventListener("click", () => {
+        window.close();
+      });
+
+      updateButtons();
+      loadSubscriptionStatus();
+    </script>
+  </body>
+</html>

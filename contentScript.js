@@ -6,17 +6,30 @@ const state = {
   totalChunks: 0,
   currentChunk: 0,
   language: "",
+  debug: {
+    enabled: true,
+    stage: "idle",
+    pdfUrl: "",
+    pageTextLengths: [],
+    totalExtractedChars: 0,
+    lastError: "",
+    sourceType: "",
+  },
 };
 
 const pdfjs = window.pdfjsLib;
+const PAYWALL_LIMIT_SECONDS = 120;
 let textChunks = [];
 let currentChunkIndex = 0;
 let isPreparing = false;
-let skipNextEnd = false;
 let restartOnResume = false;
 let detectedLanguage = "";
-let selectedVoice = null;
-let availableVoices = [];
+let lastResolvedPdfUrl = "";
+let currentAudio = null;
+let currentAudioUrl = "";
+let playbackToken = 0;
+let playbackStartedAtMs = 0;
+let paywallStopTimer = null;
 
 if (pdfjs?.GlobalWorkerOptions) {
   pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
@@ -24,26 +37,103 @@ if (pdfjs?.GlobalWorkerOptions) {
   );
 }
 
-function refreshVoices() {
-  availableVoices = speechSynthesis.getVoices() || [];
-  if (!selectedVoice && detectedLanguage) {
-    selectedVoice = pickVoiceForLanguage(detectedLanguage);
-  }
-}
-
-if (speechSynthesis.onvoiceschanged !== undefined) {
-  speechSynthesis.onvoiceschanged = refreshVoices;
-}
-refreshVoices();
-
 function sendStateUpdate() {
   chrome.runtime.sendMessage({ type: "stateUpdate", state });
+}
+
+function updateDebug(patch) {
+  state.debug = {
+    ...state.debug,
+    ...patch,
+  };
+  sendStateUpdate();
 }
 
 function setStatus(status, message = "") {
   state.status = status;
   state.message = message;
   sendStateUpdate();
+}
+
+function formatRemainingSeconds(seconds) {
+  const safeSeconds = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
+  const wholeSeconds = Math.ceil(safeSeconds);
+  const minutes = Math.floor(wholeSeconds / 60);
+  const rest = wholeSeconds % 60;
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+function clearPaywallTimer() {
+  if (paywallStopTimer) {
+    clearTimeout(paywallStopTimer);
+    paywallStopTimer = null;
+  }
+}
+
+function paywallReachedMessage() {
+  return "Free limit reached: 0:05 of playback. Upgrade to continue.";
+}
+
+async function getPlaybackQuota() {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: "getPlaybackQuota" }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (!response?.ok) {
+        reject(new Error(response?.error || "Unable to read playback quota."));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+async function addPlaybackUsage(seconds) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      { type: "addPlaybackUsage", seconds },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response?.ok) {
+          reject(new Error(response?.error || "Unable to save playback usage."));
+          return;
+        }
+        resolve(response);
+      }
+    );
+  });
+}
+
+function markPlaybackStart() {
+  playbackStartedAtMs = Date.now();
+}
+
+async function commitPlaybackUsage() {
+  if (!playbackStartedAtMs) {
+    return null;
+  }
+  const elapsedMs = Date.now() - playbackStartedAtMs;
+  playbackStartedAtMs = 0;
+  const elapsedSeconds = elapsedMs / 1000;
+  if (elapsedSeconds <= 0) {
+    return null;
+  }
+  return addPlaybackUsage(elapsedSeconds);
+}
+
+async function enforcePaywallBeforePlayback() {
+  const quota = await getPlaybackQuota();
+  const remainingSeconds = Number(quota.remainingSeconds);
+  if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0) {
+    setStatus("error", paywallReachedMessage());
+    return { allowed: false, remainingSeconds: 0 };
+  }
+  return { allowed: true, remainingSeconds };
 }
 
 function normalizeText(text) {
@@ -113,38 +203,165 @@ async function detectLanguageFromText(text) {
   });
 }
 
-function pickVoiceForLanguage(language) {
-  if (!availableVoices.length) {
-    return null;
-  }
-  if (!language) {
-    return (
-      availableVoices.find((voice) => voice.default) || availableVoices[0]
-    );
-  }
-  const lower = language.toLowerCase();
-  const exact = availableVoices.find(
-    (voice) => voice.lang && voice.lang.toLowerCase() === lower
-  );
-  if (exact) {
-    return exact;
-  }
-  const base = lower.split("-")[0];
-  const partial = availableVoices.find(
-    (voice) => voice.lang && voice.lang.toLowerCase().startsWith(base)
-  );
-  return partial || availableVoices.find((voice) => voice.default) || null;
-}
-
 async function extractPdfText(url) {
   if (!pdfjs) {
     throw new Error("PDF engine not available.");
   }
-  const loadingTask = pdfjs.getDocument({ url, withCredentials: true });
-  const pdf = await loadingTask.promise;
+
+  updateDebug({
+    stage: "opening_pdf",
+    pdfUrl: url,
+    sourceType: url.startsWith("file://") ? "file" : "remote",
+    pageTextLengths: [],
+    totalExtractedChars: 0,
+    lastError: "",
+  });
+
+  const openPdf = async (source) => {
+    const loadingTask = pdfjs.getDocument(source);
+    return loadingTask.promise;
+  };
+
+  let pdf = null;
+  let lastError = null;
+
+  if (url.startsWith("file://")) {
+    const loadArrayBufferViaBackground = (candidateUrl) =>
+      new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { type: "fetchPdfBytes", url: candidateUrl },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            if (!response?.ok || !response.bytes) {
+              reject(new Error(response?.error || "Background fetch failed."));
+              return;
+            }
+            if (Array.isArray(response.bytes)) {
+              resolve(Uint8Array.from(response.bytes).buffer);
+              return;
+            }
+            reject(new Error("Unsupported background response type."));
+          }
+        );
+      });
+
+    const loadArrayBufferWithXhr = (candidateUrl) =>
+      new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", candidateUrl, true);
+        xhr.responseType = "arraybuffer";
+        xhr.onload = () => {
+          if (xhr.status === 0 || (xhr.status >= 200 && xhr.status < 300)) {
+            resolve(xhr.response);
+            return;
+          }
+          reject(new Error(`XHR local PDF failed (${xhr.status}).`));
+        };
+        xhr.onerror = () => {
+          reject(new Error("XHR local PDF failed (network error)."));
+        };
+        xhr.send();
+      });
+
+    const candidates = [url];
+    try {
+      const decoded = decodeURIComponent(url);
+      if (decoded !== url) {
+        candidates.push(decoded);
+      }
+    } catch (_error) {
+      // ignore malformed URI and keep original candidate
+    }
+
+    for (const candidate of candidates) {
+      try {
+        let buffer = null;
+        try {
+          updateDebug({ stage: "loading_file_background", pdfUrl: candidate });
+          buffer = await loadArrayBufferViaBackground(candidate);
+        } catch (backgroundError) {
+          const backgroundMessage =
+            backgroundError && backgroundError.message
+              ? backgroundError.message
+              : String(backgroundError);
+          try {
+            updateDebug({
+              stage: "loading_file_fetch",
+              pdfUrl: candidate,
+              lastError: backgroundMessage,
+            });
+            const response = await fetch(candidate);
+            if (!response.ok) {
+              throw new Error(`fetch local PDF failed (${response.status}).`);
+            }
+            buffer = await response.arrayBuffer();
+          } catch (fetchError) {
+            const fetchMessage =
+              fetchError && fetchError.message ? fetchError.message : String(fetchError);
+            updateDebug({
+              stage: "loading_file_xhr",
+              pdfUrl: candidate,
+              lastError: `${backgroundMessage}; ${fetchMessage}`,
+            });
+            const xhrBuffer = await loadArrayBufferWithXhr(candidate).catch((xhrError) => {
+              const xhrMessage =
+                xhrError && xhrError.message ? xhrError.message : String(xhrError);
+              throw new Error(`${backgroundMessage}; ${fetchMessage}; ${xhrMessage}`);
+            });
+            buffer = xhrBuffer;
+          }
+        }
+        pdf = await openPdf({ data: buffer });
+        updateDebug({ stage: "pdf_opened", pdfUrl: candidate, lastError: "" });
+        break;
+      } catch (error) {
+        lastError = error;
+        updateDebug({
+          stage: "open_failed",
+          pdfUrl: candidate,
+          lastError: error && error.message ? error.message : String(error),
+        });
+      }
+    }
+
+    if (!pdf) {
+      throw (
+        lastError ||
+        new Error("Local PDF load failed: both fetch and XHR strategies failed.")
+      );
+    }
+  }
+
+  if (!pdf && !url.startsWith("file://")) {
+    try {
+      updateDebug({ stage: "loading_remote_pdf", pdfUrl: url });
+      pdf = await openPdf({ url, withCredentials: false });
+      updateDebug({ stage: "pdf_opened", pdfUrl: url, lastError: "" });
+    } catch (error) {
+      lastError = error;
+      updateDebug({
+        stage: "open_failed",
+        pdfUrl: url,
+        lastError: error && error.message ? error.message : String(error),
+      });
+    }
+  }
+
+  if (!pdf) {
+    throw lastError || new Error("Unable to load PDF.");
+  }
+
   const pages = [];
+  const pageTextLengths = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    updateDebug({
+      stage: `extracting_page_${pageNumber}`,
+      pdfUrl: url,
+    });
     const page = await pdf.getPage(pageNumber);
     const textContent = await page.getTextContent();
     const pageText = textContent.items
@@ -152,9 +369,82 @@ async function extractPdfText(url) {
       .filter(Boolean)
       .join(" ");
     pages.push(pageText);
+    pageTextLengths.push(pageText.length);
   }
 
+  updateDebug({
+    stage: "text_extracted",
+    pdfUrl: url,
+    pageTextLengths,
+    totalExtractedChars: pageTextLengths.reduce((sum, value) => sum + value, 0),
+    lastError: "",
+  });
+
   return { pages, totalPages: pdf.numPages };
+}
+
+function resolvePdfUrl() {
+  const currentUrl = window.location.href;
+
+  const decodeSafely = (value) => {
+    let decoded = value;
+    for (let i = 0; i < 3; i += 1) {
+      try {
+        const next = decodeURIComponent(decoded);
+        if (next === decoded) {
+          break;
+        }
+        decoded = next;
+      } catch (_error) {
+        break;
+      }
+    }
+    return decoded;
+  };
+
+  const sanitizePdfUrl = (value) => {
+    if (!value) {
+      return "";
+    }
+    const cleaned = decodeSafely(String(value).trim().replace(/^"+|"+$/g, ""));
+    if (!cleaned) {
+      return "";
+    }
+    try {
+      const parsed = new URL(cleaned);
+      parsed.hash = "";
+      if (parsed.protocol === "file:") {
+        parsed.search = "";
+      }
+      return parsed.toString();
+    } catch (_error) {
+      const [withoutHash] = cleaned.split("#");
+      const [withoutQuery] = withoutHash.split("?");
+      return withoutQuery;
+    }
+  };
+
+  if (window.location.protocol === "file:") {
+    return sanitizePdfUrl(currentUrl);
+  }
+
+  try {
+    const parsed = new URL(currentUrl);
+    const candidates = [
+      parsed.searchParams.get("src"),
+      parsed.searchParams.get("url"),
+      parsed.searchParams.get("file"),
+    ];
+    for (const raw of candidates) {
+      const candidate = sanitizePdfUrl(raw);
+      if (candidate && candidate.toLowerCase().includes(".pdf")) {
+        return candidate;
+      }
+    }
+  } catch (_error) {
+    return sanitizePdfUrl(currentUrl);
+  }
+  return sanitizePdfUrl(currentUrl);
 }
 
 async function prepareText() {
@@ -163,17 +453,33 @@ async function prepareText() {
   }
   isPreparing = true;
   try {
-    const { pages, totalPages } = await extractPdfText(window.location.href);
+    const pdfUrl = resolvePdfUrl();
+    lastResolvedPdfUrl = pdfUrl;
+    updateDebug({
+      stage: "preparing_text",
+      pdfUrl,
+      pageTextLengths: [],
+      totalExtractedChars: 0,
+      lastError: "",
+      sourceType: pdfUrl.startsWith("file://") ? "file" : "remote",
+    });
+    const { pages, totalPages } = await extractPdfText(pdfUrl);
     state.totalPages = totalPages;
     textChunks = buildChunks(pages);
     state.totalChunks = textChunks.length;
     state.currentChunk = 0;
+    updateDebug({
+      stage: "chunks_built",
+      totalExtractedChars: pages.reduce((sum, page) => sum + page.length, 0),
+      lastError: "",
+    });
 
     if (!textChunks.length) {
-      setStatus(
-        "error",
-        "No selectable text found. This PDF might be scanned."
-      );
+      updateDebug({
+        stage: "no_text_chunks",
+        lastError: "PDF opened, but no selectable text was extracted.",
+      });
+      setStatus("error", "No selectable text found. This PDF might be scanned.");
       isPreparing = false;
       return;
     }
@@ -181,80 +487,181 @@ async function prepareText() {
     const sample = textChunks.slice(0, 3).join(" ").slice(0, 1000);
     detectedLanguage = await detectLanguageFromText(sample);
     state.language = detectedLanguage;
-    selectedVoice = pickVoiceForLanguage(detectedLanguage);
+    updateDebug({
+      stage: "ready",
+      lastError: "",
+    });
     setStatus("idle", "");
   } catch (error) {
-    const message =
-      "Unable to access PDF text. For local files, enable file access in the extension settings.";
+    const details =
+      error && typeof error.message === "string" ? error.message : "";
+    updateDebug({
+      stage: "prepare_failed",
+      lastError: details || "Unknown PDF preparation error.",
+    });
+    const message = details
+      ? `Unable to access PDF text: ${details} (resolved: ${lastResolvedPdfUrl})`
+      : "Unable to access PDF text. For local files, enable file access in the extension settings.";
     setStatus("error", message);
   } finally {
     isPreparing = false;
   }
 }
 
-function createUtterance(text) {
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = state.speed;
-  if (detectedLanguage) {
-    utterance.lang = detectedLanguage;
+function cleanupCurrentAudio() {
+  clearPaywallTimer();
+  playbackStartedAtMs = 0;
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.src = "";
+    currentAudio.load();
+    currentAudio = null;
   }
-  if (selectedVoice) {
-    utterance.voice = selectedVoice;
+  if (currentAudioUrl) {
+    URL.revokeObjectURL(currentAudioUrl);
+    currentAudioUrl = "";
   }
-  utterance.onend = handleUtteranceEnd;
-  utterance.onerror = handleUtteranceError;
-  return utterance;
 }
 
-function handleUtteranceEnd() {
-  if (skipNextEnd) {
-    skipNextEnd = false;
+async function requestTtsBytes(text) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      {
+        type: "synthesizeSpeech",
+        text,
+        speed: state.speed,
+        language: detectedLanguage,
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response?.ok || !Array.isArray(response.bytes)) {
+          reject(new Error(response?.error || "TTS request failed."));
+          return;
+        }
+        resolve({
+          bytes: response.bytes,
+          mimeType: response.mimeType || "audio/mpeg",
+        });
+      }
+    );
+  });
+}
+
+async function handleAudioEnded(token) {
+  if (token !== playbackToken || state.status !== "reading") {
     return;
   }
-  if (state.status !== "reading") {
-    return;
-  }
+  clearPaywallTimer();
+  await commitPlaybackUsage().catch(() => null);
   currentChunkIndex += 1;
   if (currentChunkIndex >= textChunks.length) {
     state.currentChunk = textChunks.length;
+    cleanupCurrentAudio();
     setStatus("finished", "");
     return;
   }
-  speakCurrentChunk();
+  speakCurrentChunk(token);
 }
 
-function handleUtteranceError() {
-  setStatus("error", "Speech stopped unexpectedly.");
-}
-
-function speakCurrentChunk() {
+async function speakCurrentChunk(token = playbackToken) {
+  if (token !== playbackToken) {
+    return;
+  }
   if (!textChunks.length) {
     setStatus("error", "No text available to read.");
     return;
   }
+
+  while (currentChunkIndex < textChunks.length && !textChunks[currentChunkIndex]) {
+    currentChunkIndex += 1;
+  }
+
   if (currentChunkIndex >= textChunks.length) {
+    cleanupCurrentAudio();
     setStatus("finished", "");
     return;
   }
-  const chunk = textChunks[currentChunkIndex];
-  if (!chunk) {
-    currentChunkIndex += 1;
-    speakCurrentChunk();
-    return;
-  }
+
   state.currentChunk = currentChunkIndex + 1;
   sendStateUpdate();
-  const utterance = createUtterance(chunk);
-  speechSynthesis.speak(utterance);
-}
 
-function cancelSpeech() {
-  if (speechSynthesis.speaking || speechSynthesis.pending) {
-    skipNextEnd = true;
-  } else {
-    skipNextEnd = false;
+  const chunk = textChunks[currentChunkIndex];
+  let quota;
+  try {
+    quota = await enforcePaywallBeforePlayback();
+  } catch (error) {
+    const details =
+      error && typeof error.message === "string"
+        ? error.message
+        : "Unable to validate playback quota.";
+    setStatus("error", details);
+    return;
   }
-  speechSynthesis.cancel();
+  if (!quota.allowed) {
+    return;
+  }
+
+  setStatus(
+    "loading",
+    `Generating audio... ${formatRemainingSeconds(quota.remainingSeconds)} left`
+  );
+
+  let payload;
+  try {
+    payload = await requestTtsBytes(chunk);
+  } catch (error) {
+    const details =
+      error && typeof error.message === "string" ? error.message : "TTS request failed.";
+    setStatus("error", details);
+    return;
+  }
+
+  if (token !== playbackToken || state.status === "idle") {
+    return;
+  }
+
+  try {
+    cleanupCurrentAudio();
+    const blob = new Blob([Uint8Array.from(payload.bytes)], {
+      type: payload.mimeType,
+    });
+    currentAudioUrl = URL.createObjectURL(blob);
+    currentAudio = new Audio(currentAudioUrl);
+    currentAudio.onended = () => {
+      handleAudioEnded(token);
+    };
+    currentAudio.onerror = async () => {
+      if (token !== playbackToken) {
+        return;
+      }
+      clearPaywallTimer();
+      await commitPlaybackUsage().catch(() => null);
+      setStatus("error", "Failed to play generated audio.");
+    };
+    setStatus("reading", "");
+    await currentAudio.play();
+    markPlaybackStart();
+    clearPaywallTimer();
+    paywallStopTimer = setTimeout(async () => {
+      if (token !== playbackToken || state.status !== "reading") {
+        return;
+      }
+      await commitPlaybackUsage().catch(() => null);
+      playbackToken += 1;
+      cleanupCurrentAudio();
+      state.currentChunk = currentChunkIndex + 1;
+      setStatus("error", paywallReachedMessage());
+    }, Math.max(1, Math.floor(quota.remainingSeconds * 1000)));
+  } catch (error) {
+    clearPaywallTimer();
+    await commitPlaybackUsage().catch(() => null);
+    const details =
+      error && typeof error.message === "string" ? error.message : "Failed to play audio.";
+    setStatus("error", details);
+  }
 }
 
 async function startReading() {
@@ -262,7 +669,7 @@ async function startReading() {
     return;
   }
   if (state.status === "paused") {
-    resumeReading();
+    await resumeReading();
     return;
   }
 
@@ -278,49 +685,96 @@ async function startReading() {
     currentChunkIndex = 0;
   }
 
-  cancelSpeech();
-  state.currentChunk = currentChunkIndex + 1;
+  playbackToken += 1;
+  restartOnResume = false;
   setStatus("reading", "");
-  speakCurrentChunk();
+  await speakCurrentChunk(playbackToken);
 }
 
-function pauseReading() {
+async function pauseReading() {
   if (state.status !== "reading") {
     return;
   }
-  speechSynthesis.pause();
+  clearPaywallTimer();
+  await commitPlaybackUsage().catch(() => null);
+  if (currentAudio) {
+    currentAudio.pause();
+  }
   setStatus("paused", "");
 }
 
-function resumeReading() {
+async function resumeReading() {
   if (state.status !== "paused") {
     return;
   }
-  setStatus("reading", "");
-  if (restartOnResume) {
-    restartOnResume = false;
-    cancelSpeech();
-    speakCurrentChunk();
+
+  let quota;
+  try {
+    quota = await enforcePaywallBeforePlayback();
+  } catch (error) {
+    const details =
+      error && typeof error.message === "string"
+        ? error.message
+        : "Unable to validate playback quota.";
+    setStatus("error", details);
     return;
   }
-  speechSynthesis.resume();
+  if (!quota.allowed) {
+    return;
+  }
+
+  if (restartOnResume || !currentAudio) {
+    restartOnResume = false;
+    playbackToken += 1;
+    setStatus("reading", "");
+    await speakCurrentChunk(playbackToken);
+    return;
+  }
+
+  setStatus("reading", "");
+  try {
+    await currentAudio.play();
+    markPlaybackStart();
+    clearPaywallTimer();
+    paywallStopTimer = setTimeout(async () => {
+      if (state.status !== "reading") {
+        return;
+      }
+      await commitPlaybackUsage().catch(() => null);
+      playbackToken += 1;
+      cleanupCurrentAudio();
+      state.currentChunk = currentChunkIndex + 1;
+      setStatus("error", paywallReachedMessage());
+    }, Math.max(1, Math.floor(quota.remainingSeconds * 1000)));
+  } catch (_error) {
+    playbackToken += 1;
+    await speakCurrentChunk(playbackToken);
+  }
 }
 
-function stopReading() {
-  cancelSpeech();
+async function stopReading() {
+  clearPaywallTimer();
+  await commitPlaybackUsage().catch(() => null);
+  playbackToken += 1;
+  cleanupCurrentAudio();
+  restartOnResume = false;
   currentChunkIndex = 0;
   state.currentChunk = 0;
   setStatus("idle", "");
 }
 
-function setSpeed(speed) {
+async function setSpeed(speed) {
   if (!Number.isFinite(speed)) {
     return;
   }
   state.speed = speed;
   if (state.status === "reading") {
-    cancelSpeech();
-    speakCurrentChunk();
+    clearPaywallTimer();
+    await commitPlaybackUsage().catch(() => null);
+    playbackToken += 1;
+    cleanupCurrentAudio();
+    setStatus("reading", "");
+    await speakCurrentChunk(playbackToken);
     return;
   }
   if (state.status === "paused") {
@@ -329,7 +783,7 @@ function setSpeed(speed) {
   sendStateUpdate();
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message?.type) {
     sendResponse({ state });
     return false;
@@ -346,27 +800,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "pause") {
-    pauseReading();
-    sendResponse({ state });
-    return false;
+    pauseReading().then(() => sendResponse({ state }));
+    return true;
   }
 
   if (message.type === "resume") {
-    resumeReading();
-    sendResponse({ state });
-    return false;
+    resumeReading().then(() => sendResponse({ state }));
+    return true;
   }
 
   if (message.type === "stop") {
-    stopReading();
-    sendResponse({ state });
-    return false;
+    stopReading().then(() => sendResponse({ state }));
+    return true;
   }
 
   if (message.type === "setSpeed") {
-    setSpeed(message.speed);
-    sendResponse({ state });
-    return false;
+    setSpeed(message.speed).then(() => sendResponse({ state }));
+    return true;
   }
 
   sendResponse({ state });
@@ -374,5 +824,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 window.addEventListener("beforeunload", () => {
-  speechSynthesis.cancel();
+  commitPlaybackUsage().catch(() => null);
+  cleanupCurrentAudio();
 });

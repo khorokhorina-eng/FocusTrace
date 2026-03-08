@@ -79,3 +79,47 @@ select {
   font-size: 12px;
   color: #64748b;
 }
+
+.debug-panel {
+  border: 1px solid #dbe4ff;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.debug-panel summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.debug-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.debug-output {
+  margin: 0;
+  padding: 0 12px 12px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #475569;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.upgrade-btn {
+  background: #0f172a;
+  color: #fff;
+  border-color: #0f172a;
+  font-weight: 600;
+}
+
+.hidden {
+  display: none;
+}
