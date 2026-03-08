@@ -1,9 +1,11 @@
 const LOCAL_TTS_ENDPOINTS = [
+  "https://api.pdftext2speech.com/ext/tts",
   "http://127.0.0.1:8787/tts",
   "http://localhost:8787/tts",
 ];
 
 const LOCAL_BILLING_ENDPOINTS = [
+  "https://api.pdftext2speech.com/ext",
   "http://127.0.0.1:8787",
   "http://localhost:8787",
 ];

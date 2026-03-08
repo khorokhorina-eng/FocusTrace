@@ -45,6 +45,7 @@ const OPENAI_TTS_VOICE = process.env.OPENAI_TTS_VOICE || "alloy";
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
 
 const STRIPE_MONTHLY_PRICE_ID = process.env.STRIPE_MONTHLY_PRICE_ID || "";
 const STRIPE_YEARLY_PRICE_ID = process.env.STRIPE_YEARLY_PRICE_ID || "";
@@ -182,6 +183,13 @@ function getPlanByStripePriceId(priceId) {
   ) || null;
 }
 
+function getPublicUrl(pathname) {
+  if (!PUBLIC_BASE_URL) {
+    return `http://127.0.0.1:${PORT}${pathname}`;
+  }
+  return `${PUBLIC_BASE_URL}${pathname}`;
+}
+
 function sanitizeExtensionReturnUrl(value) {
   if (typeof value !== "string") {
     return "";
@@ -245,12 +253,12 @@ async function handleCreateCheckoutSession(req, res) {
 
     const state = readState();
     const existingCustomer = state.installToCustomer[installId] || undefined;
-    const cancelUrl = returnUrl || `http://127.0.0.1:${PORT}/paywall/cancel`;
+    const cancelUrl = returnUrl || getPublicUrl("/paywall/cancel");
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       line_items: [{ price: selectedPlan.stripePriceId, quantity: 1 }],
-      success_url: `http://127.0.0.1:${PORT}/paywall/success?session_id={CHECKOUT_SESSION_ID}`,
+      success_url: `${getPublicUrl("/paywall/success")}?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: cancelUrl,
       client_reference_id: installId,
       metadata: { installId, planId: selectedPlan.id },
