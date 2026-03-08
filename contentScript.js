@@ -150,7 +150,7 @@ function splitIntoSentences(text) {
 
 function buildChunks(pages) {
   const chunks = [];
-  const maxLength = 1200;
+  const maxLength = 400;
 
   pages.forEach((pageText) => {
     const normalized = normalizeText(pageText);

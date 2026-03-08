@@ -8,7 +8,7 @@ const LOCAL_BILLING_ENDPOINTS = [
   "http://localhost:8787",
 ];
 
-const PAYWALL_LIMIT_SECONDS = 60 * 60;
+const PAYWALL_LIMIT_SECONDS = 5;
 const PAYWALL_USED_SECONDS_KEY = "paywallUsedSeconds";
 const INSTALL_ID_KEY = "installId";
 
@@ -213,12 +213,12 @@ async function synthesizeSpeech({ text, speed, language }) {
   throw new Error(message);
 }
 
-async function createCheckoutSession(planId) {
+async function createCheckoutSession(planId, returnUrl) {
   const installId = await getOrCreateInstallId();
   const data = await fetchJsonFromEndpoints("/stripe/checkout-session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ installId, planId }),
+    body: JSON.stringify({ installId, planId, returnUrl }),
   });
   return {
     installId,
@@ -255,7 +255,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "createCheckoutSession") {
-    createCheckoutSession(message.planId)
+    createCheckoutSession(message.planId, message.returnUrl)
       .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => {
         const errorMessage =

@@ -182,6 +182,31 @@ function getPlanByStripePriceId(priceId) {
   ) || null;
 }
 
+function sanitizeExtensionReturnUrl(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "chrome-extension:") {
+      return "";
+    }
+    if (!parsed.pathname.endsWith("/paywall.html")) {
+      return "";
+    }
+    parsed.hash = "";
+    return parsed.toString();
+  } catch (_error) {
+    return "";
+  }
+}
+
 async function handleCreateCheckoutSession(req, res) {
   if (!ensureStripeConfigured(res)) {
     return;
@@ -197,6 +222,7 @@ async function handleCreateCheckoutSession(req, res) {
 
   const installId = typeof body.installId === "string" ? body.installId.trim() : "";
   const planId = typeof body.planId === "string" ? body.planId.trim() : "";
+  const returnUrl = sanitizeExtensionReturnUrl(body.returnUrl);
 
   if (!installId || !planId) {
     sendJson(res, 400, { error: "installId and planId are required." });
@@ -219,12 +245,13 @@ async function handleCreateCheckoutSession(req, res) {
 
     const state = readState();
     const existingCustomer = state.installToCustomer[installId] || undefined;
+    const cancelUrl = returnUrl || `http://127.0.0.1:${PORT}/paywall/cancel`;
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       line_items: [{ price: selectedPlan.stripePriceId, quantity: 1 }],
       success_url: `http://127.0.0.1:${PORT}/paywall/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `http://127.0.0.1:${PORT}/paywall/cancel`,
+      cancel_url: cancelUrl,
       client_reference_id: installId,
       metadata: { installId, planId: selectedPlan.id },
       ...(existingCustomer ? { customer: existingCustomer } : {}),
