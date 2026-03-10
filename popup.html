@@ -33,6 +33,42 @@
         <button id="contact" class="link-btn">Contact us</button>
       </div>
     </main>
+    <section id="paywallModal" class="paywall-modal hidden">
+      <div class="paywall-sheet">
+        <div class="paywall-top">
+          <div>
+            <p class="paywall-kicker">Unlimited listening</p>
+            <h2 class="paywall-title">Choose your plan</h2>
+          </div>
+          <button id="closePaywall" class="paywall-close" aria-label="Close paywall">×</button>
+        </div>
+        <p id="paywallStatus" class="paywall-status">Checking subscription status...</p>
+        <div id="paywallPlans" class="paywall-plans">
+          <button class="plan-card selected" data-plan-id="monthly">
+            <span class="plan-main">
+              <span class="plan-name">1-MONTH PLAN</span>
+              <span class="plan-total">$9.99 per month</span>
+            </span>
+            <span class="plan-side">
+              <span class="plan-day-price">$0.33</span>
+              <span class="plan-day-period">PER DAY</span>
+            </span>
+          </button>
+          <button class="plan-card featured" data-plan-id="yearly">
+            <span class="plan-badge accent-badge">MOST POPULAR</span>
+            <span class="plan-main">
+              <span class="plan-name">12-MONTH PLAN</span>
+              <span class="plan-total">$89.99 per year</span>
+            </span>
+            <span class="plan-side">
+              <span class="plan-day-price">$0.25</span>
+              <span class="plan-day-period">PER DAY</span>
+            </span>
+          </button>
+        </div>
+        <button id="continueCheckout" class="continue-btn">Continue</button>
+      </div>
+    </section>
     <script src="node_modules/pdfjs-dist/build/pdf.min.js"></script>
     <script src="popup.js"></script>
   </body>

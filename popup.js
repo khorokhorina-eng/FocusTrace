@@ -10,6 +10,11 @@ const fileInput = document.getElementById("fileInput");
 const limitUpgradeBtn = document.getElementById("limitUpgrade");
 const upgradeBtn = document.getElementById("upgrade");
 const contactBtn = document.getElementById("contact");
+const paywallModal = document.getElementById("paywallModal");
+const closePaywallBtn = document.getElementById("closePaywall");
+const paywallStatusEl = document.getElementById("paywallStatus");
+const continueCheckoutBtn = document.getElementById("continueCheckout");
+const planCardEls = Array.from(document.querySelectorAll(".plan-card"));
 
 const state = {
   status: "idle",
@@ -31,6 +36,17 @@ let playbackToken = 0;
 let playbackStartedAtMs = 0;
 let paywallStopTimer = null;
 let currentFileBuffer = null;
+let selectedPlanId = "yearly";
+let currentSubscription = { active: false, plan: null };
+
+const PLAN_META = {
+  monthly: {
+    buttonText: "Continue with 1-month plan",
+  },
+  yearly: {
+    buttonText: "Continue with 12-month plan",
+  },
+};
 
 const STATUS_LABELS = {
   idle: "Ready",
@@ -67,6 +83,11 @@ function updateUI() {
   pauseBtn.disabled = !(state.status === "reading" || state.status === "paused");
   stopBtn.disabled = !(state.status === "reading" || state.status === "paused");
   speedSelect.disabled = state.status === "loading";
+  const activePlanId = currentSubscription?.plan?.planId || "";
+  const isCurrentPlan = currentSubscription?.active && activePlanId === selectedPlanId;
+  continueCheckoutBtn.textContent =
+    isCurrentPlan ? "Current plan active" : PLAN_META[selectedPlanId]?.buttonText || "Continue";
+  continueCheckoutBtn.disabled = isCurrentPlan;
 }
 
 function cleanupCurrentAudio() {
@@ -237,6 +258,85 @@ function requestTtsBytes(text) {
       }
     );
   });
+}
+
+function sendRuntimeMessage(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (!response?.ok) {
+        reject(new Error(response?.error || "Request failed."));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+function setPaywallStatus(text, ok = false) {
+  paywallStatusEl.textContent = text;
+  paywallStatusEl.style.color = ok ? "#15803d" : "#6b7280";
+}
+
+function renderPaywallSelection() {
+  planCardEls.forEach((card) => {
+    const planId = card.dataset.planId || "";
+    card.classList.toggle("selected", planId === selectedPlanId);
+  });
+  updateUI();
+}
+
+async function loadSubscriptionStatus() {
+  setPaywallStatus("Checking subscription status...");
+  try {
+    const result = await sendRuntimeMessage({ type: "refreshSubscriptionStatus" });
+    currentSubscription = result || { active: false, plan: null };
+    if (currentSubscription.active) {
+      const currentPlanId = currentSubscription.plan?.planId || "";
+      if (currentPlanId) {
+        selectedPlanId = currentPlanId;
+      }
+      setPaywallStatus("Subscription active on this device.", true);
+    } else {
+      setPaywallStatus("Unlimited listening with one plan.");
+    }
+    renderPaywallSelection();
+  } catch (error) {
+    setPaywallStatus(error.message || "Failed to load subscription status.");
+  }
+}
+
+function openPaywall() {
+  paywallModal.classList.remove("hidden");
+  loadSubscriptionStatus();
+}
+
+function closePaywall() {
+  paywallModal.classList.add("hidden");
+}
+
+async function openCheckoutForSelectedPlan() {
+  continueCheckoutBtn.disabled = true;
+  setPaywallStatus("Creating Stripe Checkout session...");
+  try {
+    const result = await sendRuntimeMessage({
+      type: "createCheckoutSession",
+      planId: selectedPlanId,
+      returnUrl: chrome.runtime.getURL("paywall.html"),
+    });
+    if (!result.url) {
+      throw new Error("Checkout URL is missing.");
+    }
+    chrome.tabs.create({ url: result.url });
+    setPaywallStatus("Stripe Checkout opened in a new tab.");
+  } catch (error) {
+    setPaywallStatus(error.message || "Unable to open checkout.");
+  } finally {
+    continueCheckoutBtn.disabled = false;
+  }
 }
 
 function formatRemainingSeconds(seconds) {
@@ -516,15 +616,30 @@ speedSelect.addEventListener("change", (event) => {
 });
 
 upgradeBtn.addEventListener("click", () => {
-  chrome.tabs.create({ url: chrome.runtime.getURL("paywall.html") });
+  openPaywall();
 });
 
 limitUpgradeBtn.addEventListener("click", () => {
-  chrome.tabs.create({ url: chrome.runtime.getURL("paywall.html") });
+  openPaywall();
 });
 
 contactBtn.addEventListener("click", () => {
   chrome.tabs.create({ url: "mailto:support@pdftext2speech.com" });
+});
+
+closePaywallBtn.addEventListener("click", () => {
+  closePaywall();
+});
+
+continueCheckoutBtn.addEventListener("click", () => {
+  openCheckoutForSelectedPlan();
+});
+
+planCardEls.forEach((card) => {
+  card.addEventListener("click", () => {
+    selectedPlanId = card.dataset.planId || selectedPlanId;
+    renderPaywallSelection();
+  });
 });
 
 updateUI();
