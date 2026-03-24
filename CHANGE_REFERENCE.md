@@ -108,6 +108,13 @@ The extension must send the device token with backend requests:
 - Current bundle name:
   - `/Users/n.khorokhorina/Self/FocusTrace-chrome-web-store-final.zip`
 
+## Template Workflow
+
+- Template guide: [TEMPLATE_GUIDE.md](/Users/n.khorokhorina/Self/FocusTrace/TEMPLATE_GUIDE.md)
+- New product checklist: [NEW_PRODUCT_CHECKLIST.md](/Users/n.khorokhorina/Self/FocusTrace/NEW_PRODUCT_CHECKLIST.md)
+- Local copy helper:
+  - [create_product_copy.sh](/Users/n.khorokhorina/Self/FocusTrace/scripts/create_product_copy.sh)
+
 ## Before Shipping Changes
 
 1. Reload the unpacked extension in `chrome://extensions/`.

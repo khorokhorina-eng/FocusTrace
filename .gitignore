@@ -3,3 +3,7 @@ node_modules/
 stripe-state.json
 .env
 .ssh/
+ai-server-live.js
+ai-server-live-original.js
+hello
+*.zip
