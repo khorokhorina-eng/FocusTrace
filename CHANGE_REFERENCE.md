@@ -102,9 +102,9 @@ The extension must send the device token with backend requests:
   - `PUBLISHING_COPY.md`
   - `.gitignore`
   - scratch files such as `ai-server-live.js`
-- Keep the required packaged `pdfjs` assets referenced by the manifest and popup:
-  - `node_modules/pdfjs-dist/build/pdf.min.js`
-  - `node_modules/pdfjs-dist/build/pdf.worker.min.js`
+- Keep the vendored `pdfjs` assets referenced by the manifest and popup:
+  - `vendor/pdfjs/pdf.min.js`
+  - `vendor/pdfjs/pdf.worker.min.js`
 - Current bundle name:
   - `/Users/n.khorokhorina/Self/FocusTrace-chrome-web-store-final.zip`
 

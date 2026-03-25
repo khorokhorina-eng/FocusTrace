@@ -71,7 +71,7 @@ const STATUS_LABELS = {
 
 if (pdfjs?.GlobalWorkerOptions) {
   pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
-    "node_modules/pdfjs-dist/build/pdf.worker.min.js"
+    "vendor/pdfjs/pdf.worker.min.js"
   );
 }
 
