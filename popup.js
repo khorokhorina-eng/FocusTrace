@@ -13,6 +13,7 @@ const contactBtn = document.getElementById("contact");
 const paywallModal = document.getElementById("paywallModal");
 const closePaywallBtn = document.getElementById("closePaywall");
 const paywallStatusEl = document.getElementById("paywallStatus");
+const trialEndedNoticeEl = document.getElementById("trialEndedNotice");
 const continueCheckoutBtn = document.getElementById("continueCheckout");
 const planCardEls = Array.from(document.querySelectorAll(".plan-card"));
 const accountStateEl = document.getElementById("accountState");
@@ -23,6 +24,8 @@ const authSignedInEl = document.getElementById("authSignedIn");
 const authGoogleBtn = document.getElementById("authGoogle");
 const authSignedInTextEl = document.getElementById("authSignedInText");
 const authSignOutBtn = document.getElementById("authSignOut");
+const REMOTE_API_BASE_URL = "https://pdftext2speech.com";
+const DEVICE_TOKEN_KEY = "deviceToken";
 
 const state = {
   status: "idle",
@@ -41,8 +44,16 @@ let detectedLanguage = "";
 let currentAudio = null;
 let currentAudioUrl = "";
 let playbackToken = 0;
-let playbackStartedAtMs = 0;
 let paywallStopTimer = null;
+let playbackUiTimer = null;
+let playbackUsageFlushTimer = null;
+let currentAudioBaseSpeed = 1;
+let prefetchedChunk = null;
+let prefetchPromise = null;
+let lastKnownRemainingSeconds = 0;
+let sessionRemainingSeconds = null;
+let pendingUsageSeconds = 0;
+let lastActivePlaybackTickMs = 0;
 let currentFileBuffer = null;
 let isPreparingText = false;
 let preparationComplete = false;
@@ -50,6 +61,7 @@ let pendingStartPlayback = false;
 let selectedPlanId = "annual";
 let currentSubscription = { active: false, plan: null };
 let authState = { signedIn: false, email: "", method: null };
+let minFreePlaybackStartSeconds = 0;
 
 const PLAN_META = {
   monthly: {
@@ -91,8 +103,10 @@ function updateUI() {
     typeof state.message === "string" &&
     state.message.includes("Upgrade to continue");
   limitUpgradeBtn.classList.toggle("hidden", !shouldShowLimitUpgrade);
+  const trialExhausted = !currentSubscription?.active && getLiveRemainingSeconds() <= 0;
+  trialEndedNoticeEl.classList.toggle("hidden", !trialExhausted);
   playBtn.disabled =
-    !currentFileBuffer || state.status === "reading";
+    !currentFileBuffer || state.status === "reading" || trialExhausted;
   pauseBtn.disabled = !(state.status === "reading" || state.status === "paused");
   stopBtn.disabled = !(state.status === "reading" || state.status === "paused");
   speedSelect.disabled = state.status === "loading";
@@ -108,6 +122,137 @@ function updateUI() {
     ? `Signed in as ${authState.email}`
     : "Not signed in";
   accountActionBtn.textContent = authState.signedIn ? "Manage" : "Sign in";
+  openFileBtn.classList.toggle("primary-cta", !currentFileBuffer);
+  playBtn.classList.toggle("primary-cta", Boolean(currentFileBuffer));
+}
+
+function getLiveRemainingSeconds() {
+  if (Number.isFinite(sessionRemainingSeconds)) {
+    return Math.max(0, sessionRemainingSeconds);
+  }
+  return Math.max(0, lastKnownRemainingSeconds);
+}
+
+function updateReadingStatus() {
+  const remainingLabel = formatRemainingSeconds(getLiveRemainingSeconds());
+  setStatus(
+    "reading",
+    state.fileName
+      ? `Reading ${state.fileName} · about ${remainingLabel} left`
+      : `Reading · about ${remainingLabel} left`
+  );
+}
+
+function stopPlaybackUiTimer() {
+  if (playbackUiTimer) {
+    clearInterval(playbackUiTimer);
+    playbackUiTimer = null;
+  }
+}
+
+function stopPlaybackUsageFlushTimer() {
+  if (playbackUsageFlushTimer) {
+    clearInterval(playbackUsageFlushTimer);
+    playbackUsageFlushTimer = null;
+  }
+}
+
+function isAudioActivelyPlaying() {
+  return Boolean(
+    currentAudio &&
+      !currentAudio.paused &&
+      !currentAudio.ended &&
+      currentAudio.readyState >= 2
+  );
+}
+
+function resetPlaybackTracking() {
+  pendingUsageSeconds = 0;
+  lastActivePlaybackTickMs = 0;
+}
+
+function captureActivePlaybackDelta() {
+  const now = Date.now();
+  if (!lastActivePlaybackTickMs) {
+    lastActivePlaybackTickMs = now;
+    return 0;
+  }
+
+  if (!isAudioActivelyPlaying()) {
+    lastActivePlaybackTickMs = now;
+    return 0;
+  }
+
+  const elapsedSeconds = Math.max(0, (now - lastActivePlaybackTickMs) / 1000);
+  lastActivePlaybackTickMs = now;
+  if (elapsedSeconds <= 0) {
+    return 0;
+  }
+
+  pendingUsageSeconds += elapsedSeconds;
+  if (Number.isFinite(sessionRemainingSeconds)) {
+    sessionRemainingSeconds = Math.max(0, sessionRemainingSeconds - elapsedSeconds);
+    lastKnownRemainingSeconds = Math.max(0, sessionRemainingSeconds);
+  }
+  return elapsedSeconds;
+}
+
+function startPlaybackUiTimer() {
+  stopPlaybackUiTimer();
+  playbackUiTimer = setInterval(() => {
+    if (state.status !== "reading") {
+      stopPlaybackUiTimer();
+      return;
+    }
+    captureActivePlaybackDelta();
+    if (Number.isFinite(sessionRemainingSeconds) && sessionRemainingSeconds <= 0) {
+      stopPlaybackUiTimer();
+      const tokenAtStart = playbackToken;
+      cleanupCurrentAudio();
+      void exhaustPlaybackQuota(tokenAtStart).finally(() => {
+        if (tokenAtStart !== playbackToken) {
+          return;
+        }
+        playbackToken += 1;
+        resetSessionQuotaTracking();
+        showPaywallLimitReached();
+      });
+      return;
+    }
+    updateReadingStatus();
+  }, 1000);
+}
+
+function startPlaybackUsageFlushTimer() {
+  stopPlaybackUsageFlushTimer();
+  playbackUsageFlushTimer = setInterval(() => {
+    if (state.status !== "reading") {
+      stopPlaybackUsageFlushTimer();
+      return;
+    }
+    const tokenAtStart = playbackToken;
+    captureActivePlaybackDelta();
+    commitPlaybackUsage()
+      .then((usage) => {
+        if (tokenAtStart !== playbackToken || state.status !== "reading") {
+          return;
+        }
+        if (usage && Number(usage.remainingSeconds) <= 0) {
+          playbackToken += 1;
+          cleanupCurrentAudio();
+          resetSessionQuotaTracking();
+          showPaywallLimitReached();
+          return;
+        }
+        lastActivePlaybackTickMs = Date.now();
+      })
+      .catch(() => {
+        if (tokenAtStart !== playbackToken || state.status !== "reading") {
+          return;
+        }
+        lastActivePlaybackTickMs = Date.now();
+      });
+  }, 15000);
 }
 
 function cleanupCurrentAudio() {
@@ -115,8 +260,13 @@ function cleanupCurrentAudio() {
     clearTimeout(paywallStopTimer);
     paywallStopTimer = null;
   }
-  playbackStartedAtMs = 0;
+  stopPlaybackUiTimer();
+  stopPlaybackUsageFlushTimer();
+  resetPlaybackTracking();
+  currentAudioBaseSpeed = 1;
   if (currentAudio) {
+    currentAudio.onended = null;
+    currentAudio.onerror = null;
     currentAudio.pause();
     currentAudio.src = "";
     currentAudio.load();
@@ -128,23 +278,25 @@ function cleanupCurrentAudio() {
   }
 }
 
-function schedulePaywallStop(token, remainingSeconds) {
-  if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0) {
-    return;
-  }
+function clearPrefetch() {
+  prefetchedChunk = null;
+  prefetchPromise = null;
+}
 
-  paywallStopTimer = setTimeout(async () => {
-    if (token !== playbackToken || state.status !== "reading") {
-      return;
-    }
-    cleanupCurrentAudio();
-    await commitPlaybackUsage().catch(() => null);
-    setStatus("error", paywallReachedMessage());
-  }, remainingSeconds * 1000);
+function resetSessionQuotaTracking() {
+  sessionRemainingSeconds = null;
+}
+
+function schedulePaywallStop(token, remainingSeconds) {
+  if (paywallStopTimer) {
+    clearTimeout(paywallStopTimer);
+    paywallStopTimer = null;
+  }
 }
 
 function resetPreparedText() {
   cleanupCurrentAudio();
+  clearPrefetch();
   textChunks = [];
   currentChunkIndex = 0;
   detectedLanguage = "";
@@ -166,9 +318,54 @@ function splitIntoSentences(text) {
   return matches ? matches.map((sentence) => sentence.trim()).filter(Boolean) : [];
 }
 
+function splitLongUnit(unit, maxLength) {
+  const normalized = normalizeText(unit);
+  if (!normalized) {
+    return [];
+  }
+  if (normalized.length <= maxLength) {
+    return [normalized];
+  }
+
+  const words = normalized.split(" ");
+  const parts = [];
+  let current = "";
+
+  words.forEach((word) => {
+    if (!word) {
+      return;
+    }
+    if (word.length > maxLength) {
+      if (current) {
+        parts.push(current.trim());
+        current = "";
+      }
+      for (let index = 0; index < word.length; index += maxLength) {
+        parts.push(word.slice(index, index + maxLength));
+      }
+      return;
+    }
+
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length > maxLength) {
+      parts.push(current.trim());
+      current = word;
+      return;
+    }
+
+    current = candidate;
+  });
+
+  if (current) {
+    parts.push(current.trim());
+  }
+
+  return parts;
+}
+
 function buildChunks(pages) {
   const chunks = [];
-  const maxLength = 400;
+  const maxLength = 280;
 
   pages.forEach((pageText) => {
     const normalized = normalizeText(pageText);
@@ -177,7 +374,9 @@ function buildChunks(pages) {
     }
 
     const parts = splitIntoSentences(normalized);
-    const units = parts.length ? parts : [normalized];
+    const units = (parts.length ? parts : [normalized]).flatMap((unit) =>
+      splitLongUnit(unit, maxLength)
+    );
     let current = "";
 
     units.forEach((unit) => {
@@ -256,13 +455,13 @@ function addPlaybackUsage(seconds) {
   });
 }
 
-function requestTtsBytes(text) {
+function requestTtsBytes(text, speed = state.speed) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(
       {
         type: "synthesizeSpeech",
         text,
-        speed: state.speed,
+        speed: getEffectiveSpeed(speed),
         language: detectedLanguage,
       },
       (response) => {
@@ -283,6 +482,42 @@ function requestTtsBytes(text) {
   });
 }
 
+async function prefetchNextChunk(nextIndex, token) {
+  if (token !== playbackToken || nextIndex >= textChunks.length) {
+    return;
+  }
+  if (
+    prefetchedChunk &&
+    prefetchedChunk.index === nextIndex &&
+    prefetchedChunk.speed === state.speed
+  ) {
+    return;
+  }
+  if (prefetchPromise) {
+    return prefetchPromise;
+  }
+
+  const chunkText = textChunks[nextIndex];
+  const requestedSpeed = state.speed;
+  prefetchPromise = requestTtsBytes(chunkText, requestedSpeed)
+    .then((payload) => {
+      if (token !== playbackToken) {
+        return;
+      }
+      prefetchedChunk = {
+        index: nextIndex,
+        speed: requestedSpeed,
+        payload,
+      };
+    })
+    .catch(() => null)
+    .finally(() => {
+      prefetchPromise = null;
+    });
+
+  return prefetchPromise;
+}
+
 function sendRuntimeMessage(message) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(message, (response) => {
@@ -299,6 +534,31 @@ function sendRuntimeMessage(message) {
   });
 }
 
+function readLocalStorage(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(keys, (result) => resolve(result || {}));
+  });
+}
+
+function writeLocalStorage(payload) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set(payload, () => resolve());
+  });
+}
+
+async function getOrCreateDeviceToken() {
+  const result = await readLocalStorage([DEVICE_TOKEN_KEY]);
+  const existing = typeof result?.[DEVICE_TOKEN_KEY] === "string" ? result[DEVICE_TOKEN_KEY] : "";
+  if (existing) {
+    return existing;
+  }
+  const created =
+    (self.crypto && self.crypto.randomUUID && self.crypto.randomUUID()) ||
+    `device_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  await writeLocalStorage({ [DEVICE_TOKEN_KEY]: created });
+  return created;
+}
+
 function setPaywallStatus(text, ok = false) {
   paywallStatusEl.textContent = text;
   paywallStatusEl.style.color = ok ? "#24553a" : "#6f665c";
@@ -313,7 +573,9 @@ function updateAuthUI() {
     : "";
   authMessageEl.textContent = authState.signedIn
     ? ""
-    : "Use your 5 free minutes first. Sign in with Google when you want to buy a plan.";
+    : !currentSubscription?.active && getLiveRemainingSeconds() <= 0
+    ? "Your free trial has ended. Pay for a plan to keep listening."
+    : "Use your free trial first. Sign in with Google when you want to buy a plan.";
   updateUI();
 }
 
@@ -331,6 +593,26 @@ async function loadAuthState() {
   updateAuthUI();
 }
 
+async function refreshQuotaSnapshot() {
+  if (state.status === "reading" || state.status === "paused") {
+    return;
+  }
+
+  try {
+    const quota = await getPlaybackQuota();
+    if (Number.isFinite(Number(quota.minFreePlaybackStartSeconds))) {
+      minFreePlaybackStartSeconds = Math.max(0, Number(quota.minFreePlaybackStartSeconds));
+    }
+    if (Number.isFinite(Number(quota.remainingSeconds))) {
+      lastKnownRemainingSeconds = Math.max(0, Number(quota.remainingSeconds));
+      sessionRemainingSeconds = null;
+      updateUI();
+    }
+  } catch (_error) {
+    // Keep the last known UI state if quota refresh fails.
+  }
+}
+
 async function signInWithGoogle() {
   authGoogleBtn.disabled = true;
   authGoogleBtn.textContent = "Opening Google...";
@@ -339,12 +621,33 @@ async function signInWithGoogle() {
       type: "startGoogleSignIn",
       returnUrl: chrome.runtime.getURL("paywall.html"),
     });
-    setPaywallStatus("Complete Google sign-in in the opened tab, then return here.");
+    setPaywallStatus("Complete Google sign-in in the opened tab. The extension page will reopen automatically.");
   } catch (error) {
     setPaywallStatus(error.message || "Unable to start Google sign-in.");
   } finally {
     authGoogleBtn.disabled = false;
     authGoogleBtn.textContent = "Continue with Google";
+  }
+}
+
+async function startGoogleSignInFromPaywall() {
+  continueCheckoutBtn.disabled = true;
+  const initialLabel = continueCheckoutBtn.textContent;
+  continueCheckoutBtn.textContent = "Opening Google...";
+  try {
+    const deviceToken = await getOrCreateDeviceToken();
+    const target = new URL(`${REMOTE_API_BASE_URL}/auth/google/start`);
+    target.searchParams.set("device_token", deviceToken);
+    target.searchParams.set("return_url", chrome.runtime.getURL("paywall.html"));
+    chrome.tabs.create({ url: target.toString() });
+    setPaywallStatus(
+      "Complete Google sign-in in the opened tab. The extension page will reopen automatically."
+    );
+  } catch (error) {
+    setPaywallStatus(error.message || "Unable to start Google sign-in.");
+  } finally {
+    continueCheckoutBtn.disabled = false;
+    continueCheckoutBtn.textContent = initialLabel;
   }
 }
 
@@ -397,6 +700,9 @@ async function loadSubscriptionStatus() {
 
 function openPaywall() {
   paywallModal.classList.remove("hidden");
+  if (!currentSubscription?.active && getLiveRemainingSeconds() <= 0) {
+    setPaywallStatus("Your free trial has ended. Pay for a plan to keep listening.");
+  }
   void loadAuthState().then(() => {
     loadSubscriptionStatus();
   });
@@ -407,10 +713,17 @@ function closePaywall() {
 }
 
 async function openCheckoutForSelectedPlan() {
+  if (!authState.signedIn) {
+    setPaywallStatus("Continue with Google before checkout.");
+    await startGoogleSignInFromPaywall();
+    return;
+  }
+
   await loadAuthState();
 
   if (!authState.signedIn) {
-    setPaywallStatus("Sign in before continuing to Stripe.");
+    setPaywallStatus("Continue with Google before checkout.");
+    await signInWithGoogle();
     return;
   }
 
@@ -436,35 +749,108 @@ async function openCheckoutForSelectedPlan() {
 
 function formatRemainingSeconds(seconds) {
   const safeSeconds = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
-  const wholeSeconds = Math.ceil(safeSeconds);
-  const minutes = Math.floor(wholeSeconds / 60);
-  const rest = wholeSeconds % 60;
-  return `${minutes}:${String(rest).padStart(2, "0")}`;
+  return `${Math.ceil(safeSeconds)} sec`;
 }
 
 function paywallReachedMessage() {
-  return "Free trial used. Upgrade to continue listening.";
+  return "Your free trial has ended. Pay for a plan to keep listening.";
+}
+
+async function exhaustPlaybackQuota(token = playbackToken) {
+  if (token !== playbackToken) {
+    return;
+  }
+  const usage = await commitPlaybackUsage().catch(() => null);
+  const remainingSeconds = Number(usage?.remainingSeconds);
+  if (Number.isFinite(remainingSeconds) && remainingSeconds > 0) {
+    await addPlaybackUsage(remainingSeconds).catch(() => null);
+  }
+  lastKnownRemainingSeconds = 0;
+  sessionRemainingSeconds = 0;
+}
+
+function getEffectiveSpeed(value = state.speed) {
+  const baseSpeed = Number.isFinite(value) ? value : 1;
+  if (typeof detectedLanguage === "string" && detectedLanguage.toLowerCase().startsWith("ru")) {
+    return Math.min(2, baseSpeed * 1.2);
+  }
+  return baseSpeed;
+}
+
+function showPaywallLimitReached() {
+  stopPlaybackUiTimer();
+  setStatus("error", paywallReachedMessage());
+  updateUI();
+  openPaywall();
 }
 
 async function commitPlaybackUsage() {
-  if (!playbackStartedAtMs) {
-    return null;
-  }
-
-  const elapsedSeconds = (Date.now() - playbackStartedAtMs) / 1000;
-  playbackStartedAtMs = 0;
+  captureActivePlaybackDelta();
+  const elapsedSeconds = pendingUsageSeconds;
+  pendingUsageSeconds = 0;
   if (elapsedSeconds <= 0) {
     return null;
   }
 
-  return addPlaybackUsage(elapsedSeconds);
+  const optimisticBaseSeconds = Number.isFinite(sessionRemainingSeconds)
+    ? sessionRemainingSeconds
+    : lastKnownRemainingSeconds;
+  const optimisticRemainingSeconds = Math.max(0, optimisticBaseSeconds - elapsedSeconds);
+
+  try {
+    const result = await addPlaybackUsage(elapsedSeconds);
+    if (Number.isFinite(Number(result?.remainingSeconds))) {
+      lastKnownRemainingSeconds = Math.max(0, Number(result.remainingSeconds));
+      sessionRemainingSeconds = lastKnownRemainingSeconds;
+    } else {
+      lastKnownRemainingSeconds = optimisticRemainingSeconds;
+      sessionRemainingSeconds = optimisticRemainingSeconds;
+    }
+    return result;
+  } catch (_error) {
+    lastKnownRemainingSeconds = optimisticRemainingSeconds;
+    sessionRemainingSeconds = optimisticRemainingSeconds;
+    return {
+      remainingSeconds: optimisticRemainingSeconds,
+      localOnly: true,
+    };
+  }
 }
 
 async function enforcePaywallBeforePlayback() {
+  if (Number.isFinite(sessionRemainingSeconds)) {
+    const remainingSeconds = Math.max(0, sessionRemainingSeconds);
+    lastKnownRemainingSeconds = remainingSeconds;
+    if (remainingSeconds <= 0) {
+      showPaywallLimitReached();
+      return { allowed: false, remainingSeconds: 0 };
+    }
+    return { allowed: true, remainingSeconds };
+  }
+
   const quota = await getPlaybackQuota();
-  const remainingSeconds = Number(quota.remainingSeconds);
+  if (Number.isFinite(Number(quota.minFreePlaybackStartSeconds))) {
+    minFreePlaybackStartSeconds = Math.max(0, Number(quota.minFreePlaybackStartSeconds));
+  }
+  const quotaRemainingSeconds = Number(quota.remainingSeconds);
+  let remainingSeconds = quotaRemainingSeconds;
+  if (Number.isFinite(quotaRemainingSeconds)) {
+    const normalizedQuotaSeconds = Math.max(0, quotaRemainingSeconds);
+    remainingSeconds =
+      Number.isFinite(lastKnownRemainingSeconds) && lastKnownRemainingSeconds > 0
+        ? Math.min(lastKnownRemainingSeconds, normalizedQuotaSeconds)
+        : normalizedQuotaSeconds;
+    lastKnownRemainingSeconds = remainingSeconds;
+    sessionRemainingSeconds = remainingSeconds;
+  }
   if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0) {
-    setStatus("error", paywallReachedMessage());
+    showPaywallLimitReached();
+    return { allowed: false, remainingSeconds: 0 };
+  }
+  if (!currentSubscription?.active && remainingSeconds <= minFreePlaybackStartSeconds) {
+    lastKnownRemainingSeconds = 0;
+    sessionRemainingSeconds = 0;
+    showPaywallLimitReached();
     return { allowed: false, remainingSeconds: 0 };
   }
   return { allowed: true, remainingSeconds };
@@ -500,6 +886,7 @@ async function waitForPreparedChunks(token) {
   if (preparationComplete) {
     state.currentChunk = textChunks.length;
     cleanupCurrentAudio();
+    resetSessionQuotaTracking();
     setStatus("finished", `${state.fileName || "PDF"} finished.`);
     return;
   }
@@ -594,7 +981,15 @@ async function handleAudioEnded(token) {
     clearTimeout(paywallStopTimer);
     paywallStopTimer = null;
   }
-  await commitPlaybackUsage().catch(() => null);
+  const usage = await commitPlaybackUsage().catch(() => null);
+  if (usage && Number(usage.remainingSeconds) <= 0) {
+    cleanupCurrentAudio();
+    lastKnownRemainingSeconds = 0;
+    sessionRemainingSeconds = 0;
+    resetSessionQuotaTracking();
+    showPaywallLimitReached();
+    return;
+  }
   currentChunkIndex += 1;
 
   if (currentChunkIndex >= textChunks.length) {
@@ -643,7 +1038,17 @@ async function speakCurrentChunk(token = playbackToken) {
 
   let payload;
   try {
-    payload = await requestTtsBytes(textChunks[currentChunkIndex]);
+    currentAudioBaseSpeed = getEffectiveSpeed(state.speed);
+    if (
+      prefetchedChunk &&
+      prefetchedChunk.index === currentChunkIndex &&
+      prefetchedChunk.speed === state.speed
+    ) {
+      payload = prefetchedChunk.payload;
+      prefetchedChunk = null;
+    } else {
+      payload = await requestTtsBytes(textChunks[currentChunkIndex]);
+    }
   } catch (error) {
     const details = error && error.message ? error.message : "TTS request failed.";
     setStatus("error", details);
@@ -660,6 +1065,7 @@ async function speakCurrentChunk(token = playbackToken) {
     new Blob([Uint8Array.from(payload.bytes)], { type: payload.mimeType })
   );
   currentAudio.src = currentAudioUrl;
+  currentAudio.playbackRate = getEffectiveSpeed(state.speed);
   currentAudio.onended = () => {
     handleAudioEnded(token);
   };
@@ -668,12 +1074,17 @@ async function speakCurrentChunk(token = playbackToken) {
     setStatus("error", "Audio playback failed.");
   };
 
-  playbackStartedAtMs = Date.now();
-  schedulePaywallStop(token, quota.remainingSeconds);
+    lastActivePlaybackTickMs = Date.now();
+    sessionRemainingSeconds = quota.remainingSeconds;
+    schedulePaywallStop(token, quota.remainingSeconds);
 
   try {
     await currentAudio.play();
-    setStatus("reading", state.fileName ? `Reading ${state.fileName}` : "Reading");
+    lastActivePlaybackTickMs = Date.now();
+    void prefetchNextChunk(currentChunkIndex + 1, token);
+    updateReadingStatus();
+    startPlaybackUiTimer();
+    startPlaybackUsageFlushTimer();
   } catch (error) {
     cleanupCurrentAudio();
     const details = error && error.message ? error.message : "Unable to start audio playback.";
@@ -719,10 +1130,12 @@ async function pausePlayback() {
     if (!quota.allowed) {
       return;
     }
-    playbackStartedAtMs = Date.now();
+    lastActivePlaybackTickMs = Date.now();
     schedulePaywallStop(playbackToken, quota.remainingSeconds);
     await currentAudio.play();
-    setStatus("reading", state.fileName ? `Reading ${state.fileName}` : "Reading");
+    updateReadingStatus();
+    startPlaybackUiTimer();
+    startPlaybackUsageFlushTimer();
     return;
   }
 
@@ -730,6 +1143,7 @@ async function pausePlayback() {
     clearTimeout(paywallStopTimer);
     paywallStopTimer = null;
   }
+  stopPlaybackUiTimer();
   currentAudio.pause();
   await commitPlaybackUsage().catch(() => null);
   setStatus("paused", state.fileName ? `Paused ${state.fileName}` : "Paused");
@@ -739,6 +1153,8 @@ async function stopPlayback() {
   playbackToken += 1;
   await commitPlaybackUsage().catch(() => null);
   cleanupCurrentAudio();
+  clearPrefetch();
+  resetSessionQuotaTracking();
   currentChunkIndex = 0;
   state.currentChunk = 0;
   if (currentFileBuffer) {
@@ -770,8 +1186,26 @@ stopBtn.addEventListener("click", () => {
   stopPlayback();
 });
 
-speedSelect.addEventListener("change", (event) => {
+speedSelect.addEventListener("change", async (event) => {
   state.speed = Number.parseFloat(event.target.value) || 1;
+  clearPrefetch();
+  if (currentAudio) {
+    currentAudio.playbackRate = getEffectiveSpeed(state.speed);
+  }
+  if (state.status === "reading") {
+    setStatus("loading", "Updating speed...");
+    if (paywallStopTimer) {
+      clearTimeout(paywallStopTimer);
+      paywallStopTimer = null;
+    }
+    setTimeout(() => {
+      if (currentAudio && !currentAudio.paused) {
+        updateReadingStatus();
+        startPlaybackUiTimer();
+      }
+    }, 250);
+    return;
+  }
 });
 
 upgradeBtn.addEventListener("click", () => {
@@ -795,7 +1229,11 @@ closePaywallBtn.addEventListener("click", () => {
 });
 
 continueCheckoutBtn.addEventListener("click", () => {
-  openCheckoutForSelectedPlan();
+  if (!authState.signedIn) {
+    void startGoogleSignInFromPaywall();
+    return;
+  }
+  void openCheckoutForSelectedPlan();
 });
 
 authGoogleBtn.addEventListener("click", () => {
@@ -813,5 +1251,21 @@ planCardEls.forEach((card) => {
   });
 });
 
+window.addEventListener("focus", () => {
+  void loadAuthState().then(() => {
+    return refreshQuotaSnapshot();
+  }).then(() => {
+    if (!paywallModal.classList.contains("hidden")) {
+      return loadSubscriptionStatus();
+    }
+    return null;
+  });
+});
+
 updateUI();
-void loadAuthState();
+void loadAuthState().then(() => refreshQuotaSnapshot());
+
+window.addEventListener("beforeunload", () => {
+  commitPlaybackUsage().catch(() => null);
+  cleanupCurrentAudio();
+});

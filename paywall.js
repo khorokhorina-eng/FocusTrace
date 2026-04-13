@@ -73,7 +73,7 @@ async function signInWithGoogle() {
       type: "startGoogleSignIn",
       returnUrl: chrome.runtime.getURL("paywall.html"),
     });
-    setStatus("Complete Google sign-in in the opened tab, then refresh this page.");
+    setStatus("Complete Google sign-in in the opened tab. This page will work after you return.");
   } catch (error) {
     setStatus(error.message || "Unable to start Google sign-in.");
   } finally {
@@ -98,7 +98,8 @@ async function openCheckout(planId, button) {
   }
   await loadAuthState();
   if (!authState.signedIn) {
-    setStatus("Sign in before continuing to Stripe.");
+    setStatus("Continue with Google before checkout.");
+    await signInWithGoogle();
     return;
   }
 
@@ -178,6 +179,10 @@ authSignOutBtn.addEventListener("click", () => {
 
 closeBtn.addEventListener("click", () => {
   window.close();
+});
+
+window.addEventListener("focus", () => {
+  loadSubscriptionStatus();
 });
 
 updateButtons();

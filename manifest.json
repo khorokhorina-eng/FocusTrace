@@ -45,8 +45,16 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["vendor/pdfjs/pdf.worker.min.js"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "vendor/pdfjs/pdf.worker.min.js",
+        "paywall.html",
+        "paywall.js"
+      ],
+      "matches": [
+        "<all_urls>",
+        "https://pdftext2speech.com/*",
+        "https://www.pdftext2speech.com/*"
+      ]
     }
   ]
 }

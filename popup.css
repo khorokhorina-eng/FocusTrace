@@ -40,6 +40,7 @@ body {
 
 .hero,
 .status-panel,
+.trial-ended,
 .controls-panel,
 .footer-links,
 .paywall-sheet {
@@ -102,6 +103,29 @@ body {
   padding: 12px 14px 11px;
   background: linear-gradient(180deg, rgba(255, 250, 244, 0.92), rgba(255, 252, 247, 0.86));
   box-shadow: 0 14px 34px rgba(67, 40, 19, 0.09);
+}
+
+.trial-ended {
+  border: 1px solid rgba(166, 62, 47, 0.18);
+  border-radius: 22px;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, rgba(252, 240, 237, 0.96), rgba(255, 248, 245, 0.92));
+  box-shadow: 0 14px 34px rgba(67, 40, 19, 0.08);
+}
+
+.trial-ended-title {
+  margin: 0 0 4px;
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  color: #a63e2f;
+}
+
+.trial-ended-copy {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #6f665c;
 }
 
 .status-head {
@@ -221,6 +245,13 @@ button:not(:disabled):hover {
   color: var(--ink);
   border-color: var(--line);
   border-radius: 24px;
+}
+
+.primary-cta {
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-deep) 100%);
+  color: #fff;
+  border-color: var(--accent-deep);
+  box-shadow: 0 14px 28px rgba(143, 55, 16, 0.28);
 }
 
 .speed {

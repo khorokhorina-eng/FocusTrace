@@ -43,7 +43,14 @@ const PORT = Number(process.env.PORT || 8787);
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_TTS_MODEL = process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts";
 const OPENAI_TTS_VOICE = process.env.OPENAI_TTS_VOICE || "alloy";
-const FREE_MINUTES = Math.max(1, Number(process.env.FREE_MINUTES || 5));
+const FREE_TRIAL_SECONDS = Math.max(
+  1,
+  Number(process.env.FREE_TRIAL_SECONDS || Number(process.env.FREE_MINUTES || 2) * 60)
+);
+const MIN_FREE_PLAYBACK_START_SECONDS = Math.max(
+  0,
+  Number(process.env.MIN_FREE_PLAYBACK_START_SECONDS || 0)
+);
 const CHAR_PER_MINUTE = Math.max(1, Number(process.env.CHAR_PER_MINUTE || 900));
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
 
@@ -286,6 +293,8 @@ function getOrCreateAccount(state, email, options = {}) {
       email: normalizedEmail,
       googleSub: googleSub || null,
       method: options.method || "email",
+      trialRemainingSeconds: null,
+      trialClaimedAt: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -298,6 +307,12 @@ function getOrCreateAccount(state, email, options = {}) {
     } else if (!existing.method) {
       existing.method = options.method || "email";
     }
+    if (!Object.prototype.hasOwnProperty.call(existing, "trialRemainingSeconds")) {
+      existing.trialRemainingSeconds = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(existing, "trialClaimedAt")) {
+      existing.trialClaimedAt = null;
+    }
     existing.updatedAt = nowIso();
   }
 
@@ -309,10 +324,17 @@ function getOrCreateAccount(state, email, options = {}) {
   return state.accountsById[accountId];
 }
 
+function normalizeSeconds(value, fallback = 0) {
+  if (!Number.isFinite(Number(value))) {
+    return Math.max(0, Math.floor(Number(fallback) || 0));
+  }
+  return Math.max(0, Math.floor(Number(value)));
+}
+
 function getOrCreateDeviceUsage(state, deviceToken) {
   if (!deviceToken) {
     return {
-      minutesLeft: 0,
+      remainingSeconds: 0,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -320,35 +342,134 @@ function getOrCreateDeviceUsage(state, deviceToken) {
 
   if (!state.deviceUsageByToken[deviceToken]) {
     state.deviceUsageByToken[deviceToken] = {
-      minutesLeft: FREE_MINUTES,
+      remainingSeconds: FREE_TRIAL_SECONDS,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
   }
 
   const usage = state.deviceUsageByToken[deviceToken];
-  if (!Number.isFinite(Number(usage.minutesLeft))) {
-    usage.minutesLeft = FREE_MINUTES;
+  const fallbackSeconds = Number.isFinite(Number(usage.minutesLeft))
+    ? Math.max(
+        0,
+        (Math.max(0, Number(usage.minutesLeft)) - 1) * 60 +
+          (Number(usage.minutesLeft) > 0 ? 1 : 0)
+      )
+    : FREE_TRIAL_SECONDS;
+  if (!Number.isFinite(Number(usage.remainingSeconds))) {
+    usage.remainingSeconds = fallbackSeconds;
+    usage.updatedAt = nowIso();
   }
-  usage.minutesLeft = Math.max(0, Math.floor(Number(usage.minutesLeft)));
+  usage.remainingSeconds = Math.min(
+    FREE_TRIAL_SECONDS,
+    Math.max(0, Math.floor(Number(usage.remainingSeconds)))
+  );
+  usage.minutesLeft = Math.ceil(usage.remainingSeconds / 60);
   usage.updatedAt = usage.updatedAt || nowIso();
   usage.createdAt = usage.createdAt || nowIso();
   return usage;
 }
 
-function deductDeviceMinutes(state, deviceToken, minutes) {
-  const usage = getOrCreateDeviceUsage(state, deviceToken);
-  if (usage.minutesLeft < minutes) {
+function hasClaimedAccountTrial(account) {
+  if (!account) {
     return false;
   }
-  usage.minutesLeft -= minutes;
+
+  return (
+    Number.isFinite(Number(account.trialRemainingSeconds)) ||
+    Boolean(account.trialClaimedAt)
+  );
+}
+
+function setDeviceUsageRemainingSeconds(state, deviceToken, remainingSeconds) {
+  if (!deviceToken) {
+    return;
+  }
+
+  const usage = getOrCreateDeviceUsage(state, deviceToken);
+  usage.remainingSeconds = normalizeSeconds(remainingSeconds);
+  usage.minutesLeft = Math.ceil(usage.remainingSeconds / 60);
+  usage.updatedAt = nowIso();
+}
+
+function syncDeviceUsageToAccountTrial(state, deviceToken, account) {
+  if (!deviceToken || !account || !hasClaimedAccountTrial(account)) {
+    return;
+  }
+
+  setDeviceUsageRemainingSeconds(state, deviceToken, account.trialRemainingSeconds);
+}
+
+function claimOrSyncAccountTrial(state, account, deviceToken) {
+  if (!account) {
+    return null;
+  }
+
+  const deviceUsage = getOrCreateDeviceUsage(state, deviceToken);
+  const deviceRemainingSeconds = deviceUsage.remainingSeconds;
+
+  if (!hasClaimedAccountTrial(account)) {
+    account.trialRemainingSeconds = normalizeSeconds(
+      deviceRemainingSeconds,
+      FREE_TRIAL_SECONDS
+    );
+    account.trialClaimedAt = nowIso();
+    account.updatedAt = nowIso();
+  } else {
+    account.trialRemainingSeconds = Math.min(
+      FREE_TRIAL_SECONDS,
+      normalizeSeconds(account.trialRemainingSeconds)
+    );
+  }
+
+  syncDeviceUsageToAccountTrial(state, deviceToken, account);
+  return account.trialRemainingSeconds;
+}
+
+function getFreeTrialRemainingSeconds(state, account, deviceToken) {
+  if (!account) {
+    return getOrCreateDeviceUsage(state, deviceToken).remainingSeconds;
+  }
+
+  return claimOrSyncAccountTrial(state, account, deviceToken);
+}
+
+function deductFreeTrialSeconds(state, account, deviceToken, seconds) {
+  const normalizedSeconds = normalizeSeconds(seconds);
+  if (!normalizedSeconds) {
+    return true;
+  }
+
+  if (!account) {
+    return deductDeviceSeconds(state, deviceToken, normalizedSeconds);
+  }
+
+  const remainingSeconds = claimOrSyncAccountTrial(state, account, deviceToken);
+  if (remainingSeconds < normalizedSeconds) {
+    return false;
+  }
+
+  account.trialRemainingSeconds = remainingSeconds - normalizedSeconds;
+  account.updatedAt = nowIso();
+  syncDeviceUsageToAccountTrial(state, deviceToken, account);
+  return true;
+}
+
+function deductDeviceSeconds(state, deviceToken, seconds) {
+  const usage = getOrCreateDeviceUsage(state, deviceToken);
+  if (usage.remainingSeconds < seconds) {
+    return false;
+  }
+  usage.remainingSeconds -= seconds;
+  usage.minutesLeft = Math.ceil(usage.remainingSeconds / 60);
   usage.updatedAt = nowIso();
   return true;
 }
 
-function addDeviceMinutes(state, deviceToken, minutes) {
+function addDeviceSeconds(state, deviceToken, seconds) {
   const usage = getOrCreateDeviceUsage(state, deviceToken);
-  usage.minutesLeft += minutes;
+  usage.remainingSeconds += seconds;
+  usage.minutesLeft = Math.ceil(usage.remainingSeconds / 60);
   usage.updatedAt = nowIso();
 }
 
@@ -417,7 +538,9 @@ function getOrCreateAccountPeriodUsage(state, accountId, subscription) {
       periodKey,
       periodEnd: subscription.plan.currentPeriodEnd || null,
       includedMinutes,
+      includedSeconds: includedMinutes * 60,
       minutesUsed: 0,
+      secondsUsed: 0,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -425,16 +548,20 @@ function getOrCreateAccountPeriodUsage(state, accountId, subscription) {
 
   const usage = state.accountUsageByPeriod[accountId][periodKey];
   usage.includedMinutes = includedMinutes;
+  usage.includedSeconds = includedMinutes * 60;
   usage.planId = subscription.plan.planId || usage.planId || null;
   usage.subscriptionId = subscription.plan.subscriptionId || usage.subscriptionId || null;
   usage.periodEnd = subscription.plan.currentPeriodEnd || usage.periodEnd || null;
   usage.minutesUsed = Math.max(0, Math.floor(Number(usage.minutesUsed) || 0));
+  usage.secondsUsed = Number.isFinite(Number(usage.secondsUsed))
+    ? Math.max(0, Math.floor(Number(usage.secondsUsed)))
+    : usage.minutesUsed * 60;
   usage.updatedAt = usage.updatedAt || nowIso();
   usage.createdAt = usage.createdAt || nowIso();
   return usage;
 }
 
-function getPaidMinutesLeft(state, account, subscription) {
+function getPaidSecondsLeft(state, account, subscription) {
   if (!account || !subscription?.active) {
     return 0;
   }
@@ -444,29 +571,42 @@ function getPaidMinutesLeft(state, account, subscription) {
     return Number.MAX_SAFE_INTEGER;
   }
 
-  return Math.max(0, usage.includedMinutes - usage.minutesUsed);
+  return Math.max(0, usage.includedSeconds - usage.secondsUsed);
 }
 
-function deductPaidMinutes(state, account, subscription, minutes) {
+function displayMinutesFromSeconds(seconds) {
+  const safeSeconds = Number.isFinite(Number(seconds)) ? Math.max(0, Number(seconds)) : 0;
+  if (safeSeconds <= 0) {
+    return 0;
+  }
+  if (safeSeconds < 60) {
+    return 0;
+  }
+  return Math.max(1, Math.floor(safeSeconds / 60));
+}
+
+function deductPaidSeconds(state, account, subscription, seconds) {
   const usage = getOrCreateAccountPeriodUsage(state, account?.id, subscription);
   if (!usage) {
     return true;
   }
-  const minutesLeft = Math.max(0, usage.includedMinutes - usage.minutesUsed);
-  if (minutesLeft < minutes) {
+  const secondsLeft = Math.max(0, usage.includedSeconds - usage.secondsUsed);
+  if (secondsLeft < seconds) {
     return false;
   }
-  usage.minutesUsed += minutes;
+  usage.secondsUsed += seconds;
+  usage.minutesUsed = Math.floor(usage.secondsUsed / 60);
   usage.updatedAt = nowIso();
   return true;
 }
 
-function refundPaidMinutes(state, account, subscription, minutes) {
+function refundPaidSeconds(state, account, subscription, seconds) {
   const usage = getOrCreateAccountPeriodUsage(state, account?.id, subscription);
   if (!usage) {
     return;
   }
-  usage.minutesUsed = Math.max(0, usage.minutesUsed - minutes);
+  usage.secondsUsed = Math.max(0, usage.secondsUsed - seconds);
+  usage.minutesUsed = Math.floor(usage.secondsUsed / 60);
   usage.updatedAt = nowIso();
 }
 
@@ -592,7 +732,10 @@ async function handleAuthMe(req, res, parsedUrl) {
       subscriptionStatus: "none",
       plan: null,
       paid: false,
-      minutesLeft: FREE_MINUTES,
+      minutesLeft: displayMinutesFromSeconds(FREE_TRIAL_SECONDS),
+      remainingSeconds: FREE_TRIAL_SECONDS,
+      freeTrialSeconds: FREE_TRIAL_SECONDS,
+      minFreePlaybackStartSeconds: MIN_FREE_PLAYBACK_START_SECONDS,
     });
     return;
   }
@@ -600,8 +743,13 @@ async function handleAuthMe(req, res, parsedUrl) {
   const state = readState();
   const account = getAccountForDevice(state, deviceToken);
   const subscription = await lookupSubscriptionStatusForAccount(state, account);
-  const usage = getOrCreateDeviceUsage(state, deviceToken);
-  const paidMinutesLeft = getPaidMinutesLeft(state, account, subscription);
+  const remainingSeconds = subscription.active
+    ? getPaidSecondsLeft(state, account, subscription)
+    : getFreeTrialRemainingSeconds(state, account, deviceToken);
+
+  if (account) {
+    writeState(state);
+  }
 
   sendJson(res, 200, {
     signedIn: Boolean(account),
@@ -611,29 +759,222 @@ async function handleAuthMe(req, res, parsedUrl) {
     paid: subscription.active,
     subscriptionStatus: subscription.status || "none",
     plan: subscription.plan?.planId || null,
-    minutesLeft: subscription.active ? paidMinutesLeft : usage.minutesLeft,
+    minutesLeft: displayMinutesFromSeconds(remainingSeconds),
+    remainingSeconds,
+    freeTrialSeconds: FREE_TRIAL_SECONDS,
+    minFreePlaybackStartSeconds: MIN_FREE_PLAYBACK_START_SECONDS,
   });
 }
 
 function renderAuthCompletePage(title, message, returnUrl = "") {
   const safeReturn = sanitizeExtensionReturnUrl(returnUrl);
   const cta = safeReturn
-    ? `<p><a href="${safeReturn}">Return to the extension</a></p>`
+    ? `
+      <section class="success-card">
+        <p class="eyebrow">Signed in successfully</p>
+        <h1>${title}</h1>
+        <p class="lead">${message}</p>
+        <div class="browser-card" aria-hidden="true">
+          <div class="browser-top">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <div class="toolbar">
+            <span class="toolbar-pill"></span>
+            <div class="extension-spot">
+              <span class="step-badge">1</span>
+              <span class="extension-icon">♪</span>
+            </div>
+          </div>
+          <div class="arrow-row">
+            <span class="arrow-line"></span>
+            <span class="arrow-head"></span>
+          </div>
+        </div>
+        <div class="instruction">
+          <p class="instruction-title">Now open the extension again.</p>
+          <p class="muted">Click the extension icon in your browser toolbar to return to PDF Text to Speech.</p>
+        </div>
+      </section>
+    `
     : `<p>You can now return to the extension and continue.</p>`;
 
   return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${title}</title>
     <style>
-      body { font-family: Arial, sans-serif; padding: 32px; background: #f8fafc; color: #0f172a; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        min-height: 100vh;
+        padding: 28px 18px;
+        background:
+          radial-gradient(circle at top left, rgba(181, 82, 36, 0.14), transparent 26%),
+          linear-gradient(180deg, #f9f0e3 0%, #efe4d2 100%);
+        color: #1f1b17;
+      }
       a { color: #2563eb; }
+      .success-card {
+        max-width: 760px;
+        margin: 0 auto;
+        background: rgba(255, 251, 245, 0.92);
+        border: 1px solid rgba(112, 84, 52, 0.14);
+        border-radius: 28px;
+        padding: 28px;
+        box-shadow: 0 22px 50px rgba(67, 40, 19, 0.14);
+      }
+      .eyebrow {
+        margin: 0 0 10px;
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #b55224;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(36px, 7vw, 62px);
+        line-height: 0.94;
+        letter-spacing: -0.05em;
+      }
+      .lead {
+        margin: 0 0 22px;
+        font-size: 20px;
+        line-height: 1.45;
+      }
+      .muted {
+        color: #6f665c;
+        font-size: 18px;
+        line-height: 1.5;
+        margin: 0;
+      }
+      .browser-card {
+        margin: 26px 0 18px;
+        border: 1px solid rgba(112, 84, 52, 0.16);
+        border-radius: 24px;
+        background: #fff;
+        overflow: hidden;
+      }
+      .browser-top {
+        display: flex;
+        gap: 8px;
+        padding: 14px 16px;
+        background: #e9eefb;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(31, 27, 23, 0.22);
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 18px 20px 12px;
+      }
+      .toolbar-pill {
+        height: 20px;
+        flex: 1;
+        border-radius: 999px;
+        background: #f1f3fb;
+      }
+      .extension-spot {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 52px;
+        height: 52px;
+        border-radius: 16px;
+        background: #fff6eb;
+        border: 2px solid #ed6b57;
+      }
+      .extension-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        background: #f2dfcb;
+        color: #1f1b17;
+        font-size: 18px;
+        font-weight: 700;
+      }
+      .step-badge {
+        position: absolute;
+        top: -14px;
+        left: -14px;
+        width: 34px;
+        height: 34px;
+        border-radius: 999px;
+        background: #fff;
+        border: 3px solid #ed6b57;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        font-size: 18px;
+        font-weight: 800;
+      }
+      .arrow-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0;
+        padding: 0 56px 18px 20px;
+      }
+      .arrow-line {
+        width: 120px;
+        height: 0;
+        border-top: 4px solid #ed6b57;
+      }
+      .arrow-head {
+        width: 18px;
+        height: 18px;
+        margin-left: -2px;
+        border-top: 4px solid #ed6b57;
+        border-right: 4px solid #ed6b57;
+        transform: rotate(45deg);
+      }
+      .instruction {
+        margin: 0 0 22px;
+      }
+      .instruction-title {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.08;
+        font-weight: 700;
+      }
+      .button {
+        display: inline-block;
+        padding: 14px 20px;
+        border-radius: 999px;
+        background: #111827;
+        color: #fff;
+        text-decoration: none;
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        font-size: 16px;
+        font-weight: 700;
+      }
+      @media (max-width: 640px) {
+        .success-card { padding: 22px 18px; }
+        .lead, .muted { font-size: 17px; }
+        .instruction-title { font-size: 24px; }
+        .arrow-row { padding-right: 34px; }
+        .arrow-line { width: 82px; }
+      }
     </style>
   </head>
   <body>
-    <h1>${title}</h1>
-    <p>${message}</p>
     ${cta}
   </body>
 </html>`;
@@ -748,6 +1089,7 @@ async function handleGoogleCallback(_req, res, parsedUrl) {
       googleSub: profile.sub || "",
     });
     linkDeviceToAccount(state, pending.deviceToken, account.id);
+    claimOrSyncAccountTrial(state, account, pending.deviceToken);
     delete state.googleStates[oauthState];
     writeState(state);
 
@@ -868,6 +1210,77 @@ async function handleCreateCheckoutSession(req, res, parsedUrl) {
   }
 }
 
+async function handlePlaybackUsage(req, res, parsedUrl) {
+  let body;
+  try {
+    body = await parseJsonBody(req);
+  } catch (error) {
+    sendJson(res, 400, { error: error.message || "Invalid request body." });
+    return;
+  }
+
+  const deviceToken = getDeviceToken(req, parsedUrl, body);
+  const rawSeconds = Number(body.seconds);
+  const usedSeconds = Number.isFinite(rawSeconds) ? Math.max(0, Math.round(rawSeconds)) : 0;
+
+  if (!deviceToken) {
+    sendJson(res, 400, { error: "Missing device token." });
+    return;
+  }
+
+  if (!usedSeconds) {
+    const state = readState();
+    const account = getAccountForDevice(state, deviceToken);
+    const subscription = await lookupSubscriptionStatusForAccount(state, account);
+    const remainingSeconds = subscription.active
+      ? getPaidSecondsLeft(state, account, subscription)
+      : getFreeTrialRemainingSeconds(state, account, deviceToken);
+    if (account) {
+      writeState(state);
+    }
+    sendJson(res, 200, {
+      paid: subscription.active,
+      subscriptionStatus: subscription.status || "none",
+      plan: subscription.plan?.planId || null,
+      minutesLeft: displayMinutesFromSeconds(remainingSeconds),
+      remainingSeconds,
+      freeTrialSeconds: FREE_TRIAL_SECONDS,
+      minFreePlaybackStartSeconds: MIN_FREE_PLAYBACK_START_SECONDS,
+    });
+    return;
+  }
+
+  const state = readState();
+  const account = getAccountForDevice(state, deviceToken);
+  const subscription = await lookupSubscriptionStatusForAccount(state, account);
+  const ok = subscription.active
+    ? deductPaidSeconds(state, account, subscription, usedSeconds)
+    : deductFreeTrialSeconds(state, account, deviceToken, usedSeconds);
+
+  if (!ok) {
+    sendJson(res, 402, {
+      error: subscription.active ? "paid-plan-limit-reached" : "not-enough-queries",
+    });
+    return;
+  }
+
+  writeState(state);
+
+  const remainingSeconds = subscription.active
+    ? getPaidSecondsLeft(state, account, subscription)
+    : getFreeTrialRemainingSeconds(state, account, deviceToken);
+
+  sendJson(res, 200, {
+    paid: subscription.active,
+    subscriptionStatus: subscription.status || "none",
+    plan: subscription.plan?.planId || null,
+    minutesLeft: displayMinutesFromSeconds(remainingSeconds),
+    remainingSeconds,
+    freeTrialSeconds: FREE_TRIAL_SECONDS,
+    minFreePlaybackStartSeconds: MIN_FREE_PLAYBACK_START_SECONDS,
+  });
+}
+
 async function handleSubscriptionStatus(req, res, parsedUrl) {
   if (!ensureStripeConfigured(res)) {
     return;
@@ -890,12 +1303,19 @@ async function handleSubscriptionStatus(req, res, parsedUrl) {
     const state = readState();
     const account = getAccountForDevice(state, deviceToken);
     const status = await lookupSubscriptionStatusForAccount(state, account);
-    const usage = getOrCreateDeviceUsage(state, deviceToken);
-    const paidMinutesLeft = getPaidMinutesLeft(state, account, status);
+    const remainingSeconds = status.active
+      ? getPaidSecondsLeft(state, account, status)
+      : getFreeTrialRemainingSeconds(state, account, deviceToken);
+    if (account) {
+      writeState(state);
+    }
     sendJson(res, 200, {
       deviceToken,
       ...status,
-      minutesLeft: status.active ? paidMinutesLeft : usage.minutesLeft,
+      minutesLeft: displayMinutesFromSeconds(remainingSeconds),
+      remainingSeconds,
+      freeTrialSeconds: FREE_TRIAL_SECONDS,
+      minFreePlaybackStartSeconds: MIN_FREE_PLAYBACK_START_SECONDS,
       paid: status.active,
       subscriptionStatus: status.status || "none",
     });
@@ -1003,24 +1423,17 @@ async function handleTts(req, res, parsedUrl) {
   const state = readState();
   const account = getAccountForDevice(state, deviceToken);
   const subscription = await lookupSubscriptionStatusForAccount(state, account);
-  const usageCost = Math.max(1, Math.ceil(text.length / CHAR_PER_MINUTE));
-  const shouldChargeTrial = !subscription.active;
-  const shouldChargePaidPlan = subscription.active;
-
-  if (shouldChargeTrial) {
-    if (!deductDeviceMinutes(state, deviceToken, usageCost)) {
-      sendJson(res, 402, { error: "not-enough-queries" });
-      return;
-    }
+  const remainingSeconds = subscription.active
+    ? getPaidSecondsLeft(state, account, subscription)
+    : getFreeTrialRemainingSeconds(state, account, deviceToken);
+  if (account) {
     writeState(state);
   }
-
-  if (shouldChargePaidPlan) {
-    if (!deductPaidMinutes(state, account, subscription, usageCost)) {
-      sendJson(res, 402, { error: "paid-plan-limit-reached" });
-      return;
-    }
-    writeState(state);
+  if (remainingSeconds <= 0) {
+    sendJson(res, 402, {
+      error: subscription.active ? "paid-plan-limit-reached" : "not-enough-queries",
+    });
+    return;
   }
 
   const payload = {
@@ -1046,14 +1459,6 @@ async function handleTts(req, res, parsedUrl) {
 
     if (!upstream.ok) {
       const details = await upstream.text().catch(() => "");
-      if (shouldChargeTrial) {
-        addDeviceMinutes(state, deviceToken, usageCost);
-        writeState(state);
-      }
-      if (shouldChargePaidPlan) {
-        refundPaidMinutes(state, account, subscription, usageCost);
-        writeState(state);
-      }
       sendJson(res, upstream.status, {
         error: details || "OpenAI TTS request failed.",
       });
@@ -1068,14 +1473,6 @@ async function handleTts(req, res, parsedUrl) {
     });
     res.end(buffer);
   } catch (error) {
-    if (shouldChargeTrial) {
-      addDeviceMinutes(state, deviceToken, usageCost);
-      writeState(state);
-    }
-    if (shouldChargePaidPlan) {
-      refundPaidMinutes(state, account, subscription, usageCost);
-      writeState(state);
-    }
     sendJson(res, 502, { error: error.message || "Failed to call OpenAI TTS." });
   }
 }
@@ -1147,6 +1544,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && parsedUrl.pathname === "/usage") {
+    await handlePlaybackUsage(req, res, parsedUrl);
+    return;
+  }
+
   if (
     req.method === "POST" &&
     (parsedUrl.pathname === "/stripe/checkout-session" || parsedUrl.pathname === "/checkout")
@@ -1190,6 +1592,6 @@ server.listen(PORT, "127.0.0.1", () => {
     "Optional auth env: GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET"
   );
   console.log(
-    "Optional quota env: FREE_MINUTES, CHAR_PER_MINUTE, MONTHLY_MINUTES, ANNUAL_MINUTES"
+    "Optional quota env: FREE_TRIAL_SECONDS, FREE_MINUTES, MIN_FREE_PLAYBACK_START_SECONDS, CHAR_PER_MINUTE, MONTHLY_MINUTES, ANNUAL_MINUTES"
   );
 });

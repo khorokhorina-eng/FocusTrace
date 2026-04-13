@@ -30,6 +30,14 @@ let currentAudioUrl = "";
 let playbackToken = 0;
 let playbackStartedAtMs = 0;
 let paywallStopTimer = null;
+let playbackUiTimer = null;
+let playbackUsageFlushTimer = null;
+let currentAudioBaseSpeed = 1;
+let prefetchedChunk = null;
+let prefetchPromise = null;
+let lastKnownRemainingSeconds = 0;
+let sessionRemainingSeconds = null;
+let minFreePlaybackStartSeconds = 0;
 
 if (pdfjs?.GlobalWorkerOptions) {
   pdfjs.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
@@ -55,12 +63,94 @@ function setStatus(status, message = "") {
   sendStateUpdate();
 }
 
+function getLiveRemainingSeconds() {
+  if (Number.isFinite(sessionRemainingSeconds)) {
+    return Math.max(0, sessionRemainingSeconds);
+  }
+  return Math.max(0, lastKnownRemainingSeconds);
+}
+
+function updateReadingStatus() {
+  setStatus("reading", `about ${formatRemainingSeconds(getLiveRemainingSeconds())} left`);
+}
+
+function stopPlaybackUiTimer() {
+  if (playbackUiTimer) {
+    clearInterval(playbackUiTimer);
+    playbackUiTimer = null;
+  }
+}
+
+function stopPlaybackUsageFlushTimer() {
+  if (playbackUsageFlushTimer) {
+    clearInterval(playbackUsageFlushTimer);
+    playbackUsageFlushTimer = null;
+  }
+}
+
+function startPlaybackUiTimer() {
+  stopPlaybackUiTimer();
+  playbackUiTimer = setInterval(() => {
+    if (state.status !== "reading") {
+      stopPlaybackUiTimer();
+      return;
+    }
+    if (Number.isFinite(sessionRemainingSeconds)) {
+      sessionRemainingSeconds = Math.max(0, sessionRemainingSeconds - 1);
+      lastKnownRemainingSeconds = Math.max(0, sessionRemainingSeconds);
+      if (sessionRemainingSeconds <= 0) {
+        stopPlaybackUiTimer();
+        const tokenAtStart = playbackToken;
+        cleanupCurrentAudio();
+        void exhaustPlaybackQuota(tokenAtStart).finally(() => {
+          if (tokenAtStart !== playbackToken) {
+            return;
+          }
+          playbackToken += 1;
+          resetSessionQuotaTracking();
+          setStatus("error", paywallReachedMessage());
+        });
+        return;
+      }
+    }
+    updateReadingStatus();
+  }, 1000);
+}
+
+function startPlaybackUsageFlushTimer() {
+  stopPlaybackUsageFlushTimer();
+  playbackUsageFlushTimer = setInterval(() => {
+    if (state.status !== "reading") {
+      stopPlaybackUsageFlushTimer();
+      return;
+    }
+    const tokenAtStart = playbackToken;
+    commitPlaybackUsage()
+      .then((usage) => {
+        if (tokenAtStart !== playbackToken || state.status !== "reading") {
+          return;
+        }
+        if (usage && Number(usage.remainingSeconds) <= 0) {
+          playbackToken += 1;
+          cleanupCurrentAudio();
+          resetSessionQuotaTracking();
+          setStatus("error", paywallReachedMessage());
+          return;
+        }
+        playbackStartedAtMs = Date.now();
+      })
+      .catch(() => {
+        if (tokenAtStart !== playbackToken || state.status !== "reading") {
+          return;
+        }
+        playbackStartedAtMs = Date.now();
+      });
+  }, 15000);
+}
+
 function formatRemainingSeconds(seconds) {
   const safeSeconds = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
-  const wholeSeconds = Math.ceil(safeSeconds);
-  const minutes = Math.floor(wholeSeconds / 60);
-  const rest = wholeSeconds % 60;
-  return `${minutes}:${String(rest).padStart(2, "0")}`;
+  return `${Math.ceil(safeSeconds)} sec`;
 }
 
 function clearPaywallTimer() {
@@ -70,8 +160,38 @@ function clearPaywallTimer() {
   }
 }
 
+function clearPrefetch() {
+  prefetchedChunk = null;
+  prefetchPromise = null;
+}
+
+function resetSessionQuotaTracking() {
+  sessionRemainingSeconds = null;
+}
+
 function paywallReachedMessage() {
-  return "Free limit reached: 0:05 of playback. Upgrade to continue.";
+  return "Your trial has ended. Upgrade to keep listening.";
+}
+
+async function exhaustPlaybackQuota(token = playbackToken) {
+  if (token !== playbackToken) {
+    return;
+  }
+  const usage = await commitPlaybackUsage().catch(() => null);
+  const remainingSeconds = Number(usage?.remainingSeconds);
+  if (Number.isFinite(remainingSeconds) && remainingSeconds > 0) {
+    await addPlaybackUsage(remainingSeconds).catch(() => null);
+  }
+  lastKnownRemainingSeconds = 0;
+  sessionRemainingSeconds = 0;
+}
+
+function getEffectiveSpeed(value = state.speed) {
+  const baseSpeed = Number.isFinite(value) ? value : 1;
+  if (typeof detectedLanguage === "string" && detectedLanguage.toLowerCase().startsWith("ru")) {
+    return Math.min(2, baseSpeed * 1.2);
+  }
+  return baseSpeed;
 }
 
 async function getPlaybackQuota() {
@@ -123,13 +243,63 @@ async function commitPlaybackUsage() {
   if (elapsedSeconds <= 0) {
     return null;
   }
-  return addPlaybackUsage(elapsedSeconds);
+  const optimisticBaseSeconds = Number.isFinite(sessionRemainingSeconds)
+    ? sessionRemainingSeconds
+    : lastKnownRemainingSeconds;
+  const optimisticRemainingSeconds = Math.max(0, optimisticBaseSeconds - elapsedSeconds);
+  try {
+    const result = await addPlaybackUsage(elapsedSeconds);
+    if (Number.isFinite(Number(result?.remainingSeconds))) {
+      lastKnownRemainingSeconds = Math.max(0, Number(result.remainingSeconds));
+      sessionRemainingSeconds = lastKnownRemainingSeconds;
+    } else {
+      lastKnownRemainingSeconds = optimisticRemainingSeconds;
+      sessionRemainingSeconds = optimisticRemainingSeconds;
+    }
+    return result;
+  } catch (_error) {
+    lastKnownRemainingSeconds = optimisticRemainingSeconds;
+    sessionRemainingSeconds = optimisticRemainingSeconds;
+    return {
+      remainingSeconds: optimisticRemainingSeconds,
+      localOnly: true,
+    };
+  }
 }
 
 async function enforcePaywallBeforePlayback() {
+  if (Number.isFinite(sessionRemainingSeconds)) {
+    const remainingSeconds = Math.max(0, sessionRemainingSeconds);
+    lastKnownRemainingSeconds = remainingSeconds;
+    if (remainingSeconds <= 0) {
+      setStatus("error", paywallReachedMessage());
+      return { allowed: false, remainingSeconds: 0 };
+    }
+    return { allowed: true, remainingSeconds };
+  }
+
   const quota = await getPlaybackQuota();
-  const remainingSeconds = Number(quota.remainingSeconds);
+  if (Number.isFinite(Number(quota.minFreePlaybackStartSeconds))) {
+    minFreePlaybackStartSeconds = Math.max(0, Number(quota.minFreePlaybackStartSeconds));
+  }
+  const quotaRemainingSeconds = Number(quota.remainingSeconds);
+  let remainingSeconds = quotaRemainingSeconds;
+  if (Number.isFinite(quotaRemainingSeconds)) {
+    const normalizedQuotaSeconds = Math.max(0, quotaRemainingSeconds);
+    remainingSeconds =
+      Number.isFinite(lastKnownRemainingSeconds) && lastKnownRemainingSeconds > 0
+        ? Math.min(lastKnownRemainingSeconds, normalizedQuotaSeconds)
+        : normalizedQuotaSeconds;
+    lastKnownRemainingSeconds = remainingSeconds;
+    sessionRemainingSeconds = remainingSeconds;
+  }
   if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0) {
+    setStatus("error", paywallReachedMessage());
+    return { allowed: false, remainingSeconds: 0 };
+  }
+  if (remainingSeconds <= minFreePlaybackStartSeconds) {
+    lastKnownRemainingSeconds = 0;
+    sessionRemainingSeconds = 0;
     setStatus("error", paywallReachedMessage());
     return { allowed: false, remainingSeconds: 0 };
   }
@@ -148,9 +318,54 @@ function splitIntoSentences(text) {
   return matches.map((sentence) => sentence.trim()).filter(Boolean);
 }
 
+function splitLongUnit(unit, maxLength) {
+  const normalized = normalizeText(unit);
+  if (!normalized) {
+    return [];
+  }
+  if (normalized.length <= maxLength) {
+    return [normalized];
+  }
+
+  const words = normalized.split(" ");
+  const parts = [];
+  let current = "";
+
+  words.forEach((word) => {
+    if (!word) {
+      return;
+    }
+    if (word.length > maxLength) {
+      if (current) {
+        parts.push(current.trim());
+        current = "";
+      }
+      for (let index = 0; index < word.length; index += maxLength) {
+        parts.push(word.slice(index, index + maxLength));
+      }
+      return;
+    }
+
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length > maxLength) {
+      parts.push(current.trim());
+      current = word;
+      return;
+    }
+
+    current = candidate;
+  });
+
+  if (current) {
+    parts.push(current.trim());
+  }
+
+  return parts;
+}
+
 function buildChunks(pages) {
   const chunks = [];
-  const maxLength = 400;
+  const maxLength = 280;
 
   pages.forEach((pageText) => {
     const normalized = normalizeText(pageText);
@@ -158,7 +373,9 @@ function buildChunks(pages) {
       return;
     }
     const sentences = splitIntoSentences(normalized);
-    const parts = sentences.length ? sentences : [normalized];
+    const parts = (sentences.length ? sentences : [normalized]).flatMap((unit) =>
+      splitLongUnit(unit, maxLength)
+    );
     let current = "";
 
     parts.forEach((sentence) => {
@@ -510,8 +727,13 @@ async function prepareText() {
 
 function cleanupCurrentAudio() {
   clearPaywallTimer();
+  stopPlaybackUiTimer();
+  stopPlaybackUsageFlushTimer();
   playbackStartedAtMs = 0;
+  currentAudioBaseSpeed = 1;
   if (currentAudio) {
+    currentAudio.onended = null;
+    currentAudio.onerror = null;
     currentAudio.pause();
     currentAudio.src = "";
     currentAudio.load();
@@ -523,13 +745,13 @@ function cleanupCurrentAudio() {
   }
 }
 
-async function requestTtsBytes(text) {
+async function requestTtsBytes(text, speed = state.speed) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(
       {
         type: "synthesizeSpeech",
         text,
-        speed: state.speed,
+        speed: getEffectiveSpeed(speed),
         language: detectedLanguage,
       },
       (response) => {
@@ -550,16 +772,59 @@ async function requestTtsBytes(text) {
   });
 }
 
+async function prefetchNextChunk(nextIndex, token) {
+  if (token !== playbackToken || nextIndex >= textChunks.length) {
+    return;
+  }
+  if (
+    prefetchedChunk &&
+    prefetchedChunk.index === nextIndex &&
+    prefetchedChunk.speed === state.speed
+  ) {
+    return;
+  }
+  if (prefetchPromise) {
+    return prefetchPromise;
+  }
+
+  const chunkText = textChunks[nextIndex];
+  const requestedSpeed = state.speed;
+  prefetchPromise = requestTtsBytes(chunkText, requestedSpeed)
+    .then((payload) => {
+      if (token !== playbackToken) {
+        return;
+      }
+      prefetchedChunk = {
+        index: nextIndex,
+        speed: requestedSpeed,
+        payload,
+      };
+    })
+    .catch(() => null)
+    .finally(() => {
+      prefetchPromise = null;
+    });
+
+  return prefetchPromise;
+}
+
 async function handleAudioEnded(token) {
   if (token !== playbackToken || state.status !== "reading") {
     return;
   }
   clearPaywallTimer();
-  await commitPlaybackUsage().catch(() => null);
+  const usage = await commitPlaybackUsage().catch(() => null);
+  if (usage && Number(usage.remainingSeconds) <= 0) {
+    cleanupCurrentAudio();
+    resetSessionQuotaTracking();
+    setStatus("error", paywallReachedMessage());
+    return;
+  }
   currentChunkIndex += 1;
   if (currentChunkIndex >= textChunks.length) {
     state.currentChunk = textChunks.length;
     cleanupCurrentAudio();
+    resetSessionQuotaTracking();
     setStatus("finished", "");
     return;
   }
@@ -581,6 +846,7 @@ async function speakCurrentChunk(token = playbackToken) {
 
   if (currentChunkIndex >= textChunks.length) {
     cleanupCurrentAudio();
+    resetSessionQuotaTracking();
     setStatus("finished", "");
     return;
   }
@@ -611,7 +877,16 @@ async function speakCurrentChunk(token = playbackToken) {
 
   let payload;
   try {
-    payload = await requestTtsBytes(chunk);
+    if (
+      prefetchedChunk &&
+      prefetchedChunk.index === currentChunkIndex &&
+      prefetchedChunk.speed === state.speed
+    ) {
+      payload = prefetchedChunk.payload;
+      prefetchedChunk = null;
+    } else {
+      payload = await requestTtsBytes(chunk);
+    }
   } catch (error) {
     const details =
       error && typeof error.message === "string" ? error.message : "TTS request failed.";
@@ -625,11 +900,13 @@ async function speakCurrentChunk(token = playbackToken) {
 
   try {
     cleanupCurrentAudio();
+    currentAudioBaseSpeed = getEffectiveSpeed(state.speed);
     const blob = new Blob([Uint8Array.from(payload.bytes)], {
       type: payload.mimeType,
     });
     currentAudioUrl = URL.createObjectURL(blob);
     currentAudio = new Audio(currentAudioUrl);
+    currentAudio.playbackRate = getEffectiveSpeed(state.speed);
     currentAudio.onended = () => {
       handleAudioEnded(token);
     };
@@ -643,7 +920,12 @@ async function speakCurrentChunk(token = playbackToken) {
     };
     setStatus("reading", "");
     await currentAudio.play();
+    void prefetchNextChunk(currentChunkIndex + 1, token);
     markPlaybackStart();
+    sessionRemainingSeconds = quota.remainingSeconds;
+    updateReadingStatus();
+    startPlaybackUiTimer();
+    startPlaybackUsageFlushTimer();
     clearPaywallTimer();
     paywallStopTimer = setTimeout(async () => {
       if (token !== playbackToken || state.status !== "reading") {
@@ -652,6 +934,7 @@ async function speakCurrentChunk(token = playbackToken) {
       await commitPlaybackUsage().catch(() => null);
       playbackToken += 1;
       cleanupCurrentAudio();
+      resetSessionQuotaTracking();
       state.currentChunk = currentChunkIndex + 1;
       setStatus("error", paywallReachedMessage());
     }, Math.max(1, Math.floor(quota.remainingSeconds * 1000)));
@@ -696,6 +979,7 @@ async function pauseReading() {
     return;
   }
   clearPaywallTimer();
+  stopPlaybackUiTimer();
   await commitPlaybackUsage().catch(() => null);
   if (currentAudio) {
     currentAudio.pause();
@@ -735,6 +1019,9 @@ async function resumeReading() {
   try {
     await currentAudio.play();
     markPlaybackStart();
+    updateReadingStatus();
+    startPlaybackUiTimer();
+    startPlaybackUsageFlushTimer();
     clearPaywallTimer();
     paywallStopTimer = setTimeout(async () => {
       if (state.status !== "reading") {
@@ -743,6 +1030,7 @@ async function resumeReading() {
       await commitPlaybackUsage().catch(() => null);
       playbackToken += 1;
       cleanupCurrentAudio();
+      resetSessionQuotaTracking();
       state.currentChunk = currentChunkIndex + 1;
       setStatus("error", paywallReachedMessage());
     }, Math.max(1, Math.floor(quota.remainingSeconds * 1000)));
@@ -757,6 +1045,8 @@ async function stopReading() {
   await commitPlaybackUsage().catch(() => null);
   playbackToken += 1;
   cleanupCurrentAudio();
+  clearPrefetch();
+  resetSessionQuotaTracking();
   restartOnResume = false;
   currentChunkIndex = 0;
   state.currentChunk = 0;
@@ -768,13 +1058,19 @@ async function setSpeed(speed) {
     return;
   }
   state.speed = speed;
+  clearPrefetch();
+  if (currentAudio) {
+    currentAudio.playbackRate = getEffectiveSpeed(state.speed);
+  }
   if (state.status === "reading") {
-    clearPaywallTimer();
-    await commitPlaybackUsage().catch(() => null);
-    playbackToken += 1;
-    cleanupCurrentAudio();
-    setStatus("reading", "");
-    await speakCurrentChunk(playbackToken);
+    setStatus("loading", "Updating speed...");
+    setTimeout(() => {
+      if (currentAudio && !currentAudio.paused) {
+        setStatus("reading", "");
+        updateReadingStatus();
+        startPlaybackUiTimer();
+      }
+    }, 250);
     return;
   }
   if (state.status === "paused") {

@@ -8,9 +8,11 @@ const BILLING_ENDPOINTS = [
   REMOTE_API_BASE_URL,
 ];
 
-const FREE_MINUTES = 5;
+const DEFAULT_FREE_TRIAL_SECONDS = 120;
+const DEFAULT_MIN_FREE_PLAYBACK_START_SECONDS = 0;
 const DEVICE_TOKEN_KEY = "deviceToken";
 const AUTH_SESSION_KEY = "authSession";
+const TRIAL_STATE_KEY = "trialState";
 
 const SUBSCRIPTION_CACHE_MS = 30 * 1000;
 let subscriptionCache = {
@@ -18,7 +20,10 @@ let subscriptionCache = {
   active: false,
   status: "none",
   plan: null,
-  minutesLeft: FREE_MINUTES,
+  minutesLeft: Math.ceil(DEFAULT_FREE_TRIAL_SECONDS / 60),
+  remainingSeconds: DEFAULT_FREE_TRIAL_SECONDS,
+  freeTrialSeconds: DEFAULT_FREE_TRIAL_SECONDS,
+  minFreePlaybackStartSeconds: DEFAULT_MIN_FREE_PLAYBACK_START_SECONDS,
   timestamp: 0,
 };
 
@@ -28,7 +33,7 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 
   chrome.tabs.create({
-    url: chrome.runtime.getURL("welcome.html"),
+    url: `${REMOTE_API_BASE_URL}/welcome.html`,
   });
 });
 
@@ -45,11 +50,37 @@ function writeStorage(payload) {
 }
 
 async function readUsageSeconds() {
-  return 0;
+  const deviceToken = await getOrCreateDeviceToken();
+  const result = await readStorage([TRIAL_STATE_KEY]);
+  const trialState = result?.[TRIAL_STATE_KEY];
+  if (!trialState || trialState.deviceToken !== deviceToken) {
+    return null;
+  }
+  if (!Number.isFinite(Number(trialState.remainingSeconds))) {
+    return null;
+  }
+  return Math.max(0, Math.floor(Number(trialState.remainingSeconds)));
 }
 
 async function writeUsageSeconds(value) {
-  return value;
+  const deviceToken = await getOrCreateDeviceToken();
+  const safeSeconds = Number.isFinite(Number(value))
+    ? Math.max(0, Math.floor(Number(value)))
+    : null;
+
+  if (safeSeconds === null) {
+    await writeStorage({ [TRIAL_STATE_KEY]: null });
+    return null;
+  }
+
+  await writeStorage({
+    [TRIAL_STATE_KEY]: {
+      deviceToken,
+      remainingSeconds: safeSeconds,
+      updatedAt: Date.now(),
+    },
+  });
+  return safeSeconds;
 }
 
 async function getOrCreateDeviceToken() {
@@ -118,6 +149,23 @@ async function signOut() {
   };
 }
 
+function getConfiguredFreeTrialSeconds(data) {
+  if (Number.isFinite(Number(data?.freeTrialSeconds))) {
+    return Math.max(0, Math.floor(Number(data.freeTrialSeconds)));
+  }
+  return subscriptionCache.freeTrialSeconds || DEFAULT_FREE_TRIAL_SECONDS;
+}
+
+function getConfiguredMinStartSeconds(data) {
+  if (Number.isFinite(Number(data?.minFreePlaybackStartSeconds))) {
+    return Math.max(0, Math.floor(Number(data.minFreePlaybackStartSeconds)));
+  }
+  return (
+    subscriptionCache.minFreePlaybackStartSeconds ||
+    DEFAULT_MIN_FREE_PLAYBACK_START_SECONDS
+  );
+}
+
 async function startGoogleSignIn(returnUrl) {
   const deviceToken = await getOrCreateDeviceToken();
   const target = new URL(`${REMOTE_API_BASE_URL}/auth/google/start`);
@@ -167,6 +215,7 @@ async function fetchJsonFromEndpoints(pathname, options = {}) {
 async function getSubscriptionStatus(forceRefresh = false) {
   const deviceToken = await getOrCreateDeviceToken();
   const now = Date.now();
+  const localRemainingSeconds = await readUsageSeconds();
 
   if (
     !forceRefresh &&
@@ -179,21 +228,46 @@ async function getSubscriptionStatus(forceRefresh = false) {
       status: subscriptionCache.status,
       plan: subscriptionCache.plan,
       minutesLeft: subscriptionCache.minutesLeft,
+      remainingSeconds: Number.isFinite(localRemainingSeconds)
+        ? Math.min(subscriptionCache.remainingSeconds, localRemainingSeconds)
+        : subscriptionCache.remainingSeconds,
+      freeTrialSeconds: subscriptionCache.freeTrialSeconds,
+      minFreePlaybackStartSeconds: subscriptionCache.minFreePlaybackStartSeconds,
     };
   }
 
   const data = await fetchJsonFromEndpoints("/me");
+  const configuredFreeTrialSeconds = getConfiguredFreeTrialSeconds(data);
+  const configuredMinStartSeconds = getConfiguredMinStartSeconds(data);
+  const serverRemainingSeconds = Number.isFinite(Number(data.remainingSeconds))
+    ? Math.max(0, Number(data.remainingSeconds))
+    : Number.isFinite(Number(data.minutesLeft))
+    ? Math.max(0, Number(data.minutesLeft)) * 60
+    : configuredFreeTrialSeconds;
+  const isAnonymousTrial = !data.paid && !data.signedIn;
+  const effectiveRemainingSeconds = isAnonymousTrial && Number.isFinite(localRemainingSeconds)
+    ? Math.min(serverRemainingSeconds, localRemainingSeconds)
+    : serverRemainingSeconds;
 
   subscriptionCache = {
     deviceToken,
     active: !!data.paid,
     status: data.subscriptionStatus || "none",
     plan: data.plan ? { planId: data.plan } : null,
+    remainingSeconds: effectiveRemainingSeconds,
     minutesLeft: Number.isFinite(Number(data.minutesLeft))
       ? Math.max(0, Number(data.minutesLeft))
-      : FREE_MINUTES,
+      : Math.ceil(configuredFreeTrialSeconds / 60),
+    freeTrialSeconds: configuredFreeTrialSeconds,
+    minFreePlaybackStartSeconds: configuredMinStartSeconds,
     timestamp: now,
   };
+
+  if (isAnonymousTrial) {
+    await writeUsageSeconds(effectiveRemainingSeconds);
+  } else {
+    await writeUsageSeconds(null);
+  }
 
   return {
     deviceToken,
@@ -201,17 +275,21 @@ async function getSubscriptionStatus(forceRefresh = false) {
     status: subscriptionCache.status,
     plan: subscriptionCache.plan,
     minutesLeft: subscriptionCache.minutesLeft,
+    remainingSeconds: subscriptionCache.remainingSeconds,
+    freeTrialSeconds: subscriptionCache.freeTrialSeconds,
+    minFreePlaybackStartSeconds: subscriptionCache.minFreePlaybackStartSeconds,
   };
 }
 
 async function getPlaybackQuota() {
-  const sub = await getSubscriptionStatus(false).catch(() => ({ active: false }));
-  const minutesLeft = Number.isFinite(Number(sub.minutesLeft))
-    ? Math.max(0, Number(sub.minutesLeft))
+  const sub = await getSubscriptionStatus(true).catch(() => ({ active: false }));
+  const remainingSeconds = Number.isFinite(Number(sub.remainingSeconds))
+    ? Math.max(0, Number(sub.remainingSeconds))
+    : Number.isFinite(Number(sub.minutesLeft))
+    ? Math.max(0, Number(sub.minutesLeft)) * 60
     : sub.active
     ? Number.MAX_SAFE_INTEGER
     : 0;
-  const remainingSeconds = minutesLeft * 60;
 
   if (sub.active) {
     return {
@@ -222,22 +300,67 @@ async function getPlaybackQuota() {
       isSubscribed: true,
       subscriptionStatus: sub.status || "active",
       plan: sub.plan || null,
+      freeTrialSeconds: Number.isFinite(Number(sub.freeTrialSeconds))
+        ? Math.max(0, Number(sub.freeTrialSeconds))
+        : DEFAULT_FREE_TRIAL_SECONDS,
+      minFreePlaybackStartSeconds: Number.isFinite(Number(sub.minFreePlaybackStartSeconds))
+        ? Math.max(0, Number(sub.minFreePlaybackStartSeconds))
+        : DEFAULT_MIN_FREE_PLAYBACK_START_SECONDS,
     };
   }
 
+  const minFreePlaybackStartSeconds = Number.isFinite(Number(sub.minFreePlaybackStartSeconds))
+    ? Math.max(0, Number(sub.minFreePlaybackStartSeconds))
+    : DEFAULT_MIN_FREE_PLAYBACK_START_SECONDS;
+  const freeTrialSeconds = Number.isFinite(Number(sub.freeTrialSeconds))
+    ? Math.max(0, Number(sub.freeTrialSeconds))
+    : DEFAULT_FREE_TRIAL_SECONDS;
+
   return {
     usedSeconds: 0,
-    limitSeconds: FREE_MINUTES * 60,
+    limitSeconds: freeTrialSeconds,
     remainingSeconds,
-    isLimited: remainingSeconds <= 0,
+    isLimited: remainingSeconds <= minFreePlaybackStartSeconds,
     isSubscribed: false,
     subscriptionStatus: "none",
     plan: sub.plan || null,
+    freeTrialSeconds,
+    minFreePlaybackStartSeconds,
   };
 }
 
 async function addPlaybackUsage(rawSeconds) {
-  void rawSeconds;
+  const seconds = Number(rawSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return getPlaybackQuota();
+  }
+
+  const data = await fetchJsonFromEndpoints("/usage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ seconds }),
+  });
+
+  subscriptionCache = {
+    ...subscriptionCache,
+    active: !!data.paid,
+    status: data.subscriptionStatus || subscriptionCache.status || "none",
+    plan: data.plan ? { planId: data.plan } : null,
+    minutesLeft: Number.isFinite(Number(data.minutesLeft))
+      ? Math.max(0, Number(data.minutesLeft))
+      : subscriptionCache.minutesLeft,
+    remainingSeconds: Number.isFinite(Number(data.remainingSeconds))
+      ? Math.max(0, Number(data.remainingSeconds))
+      : subscriptionCache.remainingSeconds,
+    freeTrialSeconds: getConfiguredFreeTrialSeconds(data),
+    minFreePlaybackStartSeconds: getConfiguredMinStartSeconds(data),
+    timestamp: Date.now(),
+  };
+
+  if (!data.paid) {
+    await writeUsageSeconds(subscriptionCache.remainingSeconds);
+  }
+
   return getPlaybackQuota();
 }
 
@@ -293,7 +416,6 @@ async function synthesizeSpeech({ text, speed, language }) {
 }
 
 async function createCheckoutSession(planId, returnUrl) {
-  void returnUrl;
   const deviceToken = await getOrCreateDeviceToken();
   const authState = await getAuthState();
 
@@ -307,6 +429,7 @@ async function createCheckoutSession(planId, returnUrl) {
     body: JSON.stringify({
       device_token: deviceToken,
       plan: planId,
+      return_url: returnUrl || "",
     }),
   });
   return {
